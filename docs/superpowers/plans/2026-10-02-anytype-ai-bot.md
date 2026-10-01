@@ -313,7 +313,8 @@ describe("loadConfig", () => {
   });
 
   it("throws when a required value is missing", () => {
-    expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/ANYTYPE_API_KEY/);
+    // order-independent: matches whichever required var is validated first
+    expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/Missing required env var/);
   });
 });
 ```
