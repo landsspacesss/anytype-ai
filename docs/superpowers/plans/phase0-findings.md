@@ -56,6 +56,30 @@ For the bot to be @-mentioned it must be a member of a space the user is also in
 **invite `anytype-bot` into a user space**, or have the user join the bot's space. Until then
 Tasks 10/12 can be built but not exercised end-to-end.
 
+**UPDATE 2026-10-02 — resolved.** The bot joined the user's space **考试** (API id
+`pqdthe`; full id `bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe.2reb8xis4pogu`)
+as **editor**. The user's identity there is `AA5HkDmFVBCRDKWxLHiqCLKxQ38AsMXLr2swGmDBURPJQTTF`
+(the same identity as the iPhone configured with `client.yml` — this space **is** on the
+self-hosted network, confirming everything is on one network). A second space **emotions**
+(`bafyreiffm3aoqldgxk6vsax425rmmzccy3njjwlpgdobahkyvqqbchc5f4.2reb8xis4pogu`) had a join
+request sent, pending user approval.
+
+### Global-workspace question (answered)
+Anytype has **no** "global space" / account-wide membership — membership is strictly
+per-space (per-Channel), each E2E-encrypted with its own member list (verified in docs).
+There is no way to make the bot a member of every space at once. Approximation: **one bot
+account** invited to each space individually, and **one `--all-spaces` API key** that
+covers every space the bot is a member of (including ones joined later). No global concept.
+
+### ⚠️ Design correction — participant id is SPACE-SCOPED
+A member's `id` is `_participant_<fullSpaceId>_<identity>`:
+- 考试/anytype-bot → `_participant_bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe_2reb8xis4pogu_A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm`
+
+So the bot's participant id **differs per space**; a single `BOT_PARTICIPANT_ID` constant is
+wrong for multi-space. **Task 12 must resolve the bot's participant id per space** by
+matching `identity === <botIdentity>` in `GET /v2/spaces/{id}/members`, and pass that into
+`normalizeMessage`'s `ctx.botParticipantId` for each chat's subscription.
+
 ### Consumed by
 - **Task 12:** `ANYTYPE_API_BASE_URL=http://127.0.0.1:31012`; use the API-returned short
   space id; `BOT_PARTICIPANT_ID=_participant_<fullSpaceId>_<identity>`.
