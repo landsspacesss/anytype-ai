@@ -1,6 +1,8 @@
 import type { NormalizedEvent } from "../types.js";
 
 export interface NormalizeCtx {
+  spaceId: string;
+  chatId: string;
   botParticipantId: string;
   isDirect: boolean;
   objectId?: string;
@@ -9,23 +11,28 @@ export interface NormalizeCtx {
 export function normalizeMessage(raw: unknown, ctx: NormalizeCtx): NormalizedEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  const id = r.id, chatId = r.chat_id, spaceId = r.space_id, creator = r.creator, text = r.text;
-  if (typeof id !== "string" || typeof chatId !== "string" || typeof spaceId !== "string") return null;
-  if (typeof creator !== "string") return null;
-  const mentionList = Array.isArray(r.mentions) ? r.mentions : [];
-  const mentions = mentionList as Array<{ participant_id?: string }>;
-  const mentionsBot = mentions.some((m) => m?.participant_id === ctx.botParticipantId);
+  if (typeof r.id !== "string" || typeof r.author_id !== "string") return null;
+  const text = typeof r.text === "string" ? r.text : "";
   return {
-    spaceId,
-    chatId,
-    messageId: id,
-    senderId: creator,
-    text: typeof text === "string" ? text : "",
-    mentionsBot,
-    isBotSelf: creator === ctx.botParticipantId,
+    spaceId: ctx.spaceId,
+    chatId: ctx.chatId,
+    messageId: r.id,
+    senderId: r.author_id,
+    text,
+    mentionsBot: hasMentionOf(text, ctx.botParticipantId),
+    isBotSelf: r.author_id === ctx.botParticipantId,
     isDirect: ctx.isDirect,
     objectId: ctx.objectId,
   };
+}
+
+export function hasMentionOf(text: string, participantId: string): boolean {
+  const re = /<mention\b[^>]*\bobject_id="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] === participantId) return true;
+  }
+  return false;
 }
 
 export function parseSseChunk(buffer: string): { events: unknown[]; rest: string } {

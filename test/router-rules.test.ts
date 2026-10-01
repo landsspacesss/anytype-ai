@@ -36,4 +36,12 @@ describe("stripBotMention", () => {
   it("leaves text unchanged when no mention", () => {
     expect(stripBotMention("hello", "ai")).toBe("hello");
   });
+  it("strips the real Anytype mention tag", () => {
+    expect(
+      stripBotMention(
+        '<mention object_id="_participant_X_Y">anytype-bot</mention> hello',
+        "anytype-bot",
+      ),
+    ).toBe("hello");
+  });
 });

@@ -7,6 +7,10 @@ export function shouldTrigger(event: NormalizedEvent): boolean {
 
 export function stripBotMention(text: string, botName: string): string {
   const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`@${escaped}\\b`, "gi");
-  return text.replace(re, " ").replace(/\s+/g, " ").trim();
+  // Real Anytype mention tag: <mention object_id="...">DISPLAY_NAME</mention>
+  const tagRe = new RegExp(`<mention\\b[^>]*>\\s*@?${escaped}\\s*</mention>`, "gi");
+  let out = text.replace(tagRe, " ");
+  // Legacy/plain @name
+  out = out.replace(new RegExp(`@${escaped}\\b`, "gi"), " ");
+  return out.replace(/\s+/g, " ").trim();
 }
