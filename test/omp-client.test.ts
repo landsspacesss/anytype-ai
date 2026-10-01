@@ -20,4 +20,12 @@ describe("OmpClient", () => {
     expect(client.busy).toBe(false);
     await client.close();
   });
+
+  it("aborts an in-flight prompt", async () => {
+    const client = await OmpClient.spawn({ bin: "node", args: [FAKE], cwd: process.cwd() });
+    const p = client.prompt("hi");
+    await client.abort();
+    await expect(p).resolves.toBeTypeOf("string");
+    await client.close();
+  });
 });

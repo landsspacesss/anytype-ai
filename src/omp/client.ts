@@ -93,6 +93,11 @@ export class OmpClient {
     });
   }
 
+  async abort(): Promise<void> {
+    if (!this.inFlight) return;
+    this.write({ id: this.nextId++, type: "abort" });
+  }
+
   private write(obj: unknown): void {
     this.child.stdin.write(JSON.stringify(obj) + "\n");
   }
