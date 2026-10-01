@@ -20,4 +20,16 @@ describe("loadConfig", () => {
   it("throws when a required value is missing", () => {
     expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/Missing required env var/);
   });
+
+  it("falls back to defaults for non-positive replyMaxLen and maxConcurrentSessions", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      BOT_PARTICIPANT_ID: "pid",
+      REPLY_MAX_LEN: "0",
+      MAX_CONCURRENT_SESSIONS: "-1",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.replyMaxLen).toBe(4000);
+    expect(cfg.maxConcurrentSessions).toBe(3);
+  });
 });
