@@ -1,0 +1,52 @@
+# Agent container for the Anytype @ai bot.
+#
+# Run it MERGED into the any-sync project so that
+# `network_mode: "service:anytype-cli"` can resolve (that reference only works
+# when anytype-cli is a service in the SAME compose project):
+#
+#   cd /home/landspace/anytype
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml \
+#     config        # validate
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml \
+#     up -d ai-bot  # run
+#
+# Build the image standalone from this repo:
+#   cd /home/landspace/anytype-ai-bot && docker compose -f docker-compose.bot.yml build
+#
+# The bot shares anytype-cli's network namespace, so the JSON API is reachable
+# at 127.0.0.1:31012 with the allowlisted Host header. A plain docker network
+# (networks: [anytype_default]) + service-name URL is NOT an option: the API's
+# origin allowlist rejects the service-name origin with 403 (phase0 Task 0.1).
+
+services:
+  ai-bot:
+    # Absolute paths are REQUIRED here: when this file is merged with
+    # /home/landspace/anytype/docker-compose.yml, Compose resolves this file's
+    # relative paths against the FIRST file's directory (/home/landspace/anytype),
+    # so `context: .` / `env_file: .env` would wrongly point at the any-sync
+    # project instead of the bot repo. Absolute paths work in both merged and
+    # standalone invocations.
+    build:
+      context: /home/landspace/anytype-ai-bot
+      dockerfile: Dockerfile
+    image: anytype-ai-bot:latest
+    restart: unless-stopped
+    env_file: /home/landspace/anytype-ai-bot/.env
+    volumes:
+      - bot_state:/root/.omp/agent
+      - bot_workspace:/workspace
+    # Share anytype-cli's netns -> Host header 127.0.0.1:31012 (allowlisted) and
+    # the loopback-only API bind is reachable.
+    network_mode: "service:anytype-cli"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+volumes:
+  bot_state:
+  bot_workspace:

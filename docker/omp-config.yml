@@ -1,0 +1,5 @@
+memory:
+  backend: mnemopi
+mnemopi:
+  llmMode: smol
+  scoping: per-project
