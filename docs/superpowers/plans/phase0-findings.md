@@ -205,3 +205,58 @@ unverified.
 - **Task 13 (Dockerfile):** use the GitHub-API asset download method above; put `omp` at
   `/usr/local/bin/omp`; budget for the ≈277 MB binary.
 - **Tasks 6/7 (omp client + fake):** RPC command field is `type`, not `command`.
+
+---
+
+## Task 0.2 — Real event shape & mention format (VERIFIED 2026-10-02)
+
+Captured live: bot created chat `ai-bot-test` (id `bafyreibqmhogv6b76uxz2cgnsuzp4xlhl6mzp5h4ihxowvnbh3ywt36y6u`)
+in space 考试 (`pqdthe`), posted a message, then the user posted a real @-mention.
+
+### SSE event envelope (per chat stream)
+Each event is 3 SSE lines + blank separator:
+```
+id: <stateId>
+event: message_added
+data: {"id":"<stateId>","type":"message_added","message":{ ...ChatMessage... }}
+```
+Other events: `event: state_updated` → `{"type":"state_updated","state":{...}}`. Heartbeats are
+`: keepalive` comment lines. **The plan's `parseSseChunk` (split on `\n\n`, read `data:` lines)
+handles this correctly** — id/event/keepalive lines are ignored. But `subscribeChat` must
+dispatch on the parsed object's `type` and pass `data.message` (not the wrapper) into
+`normalizeMessage`.
+
+### ChatMessage shape (CORRECTS the plan's assumption)
+```json
+{"id":"bafyreif...","order":"!!'P","author":"Zappy Porcupine",
+ "author_id":"_participant_bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe_2reb8xis4pogu_AA5Hk...",
+ "at":"2026-10-01T17:18:17Z",
+ "text":"<mention object_id=\"_participant_..._A7D1k...\">anytype-bot</mention> hello"}
+```
+- The author field is **`author_id`** (participant id), NOT `creator`. (Plan's `normalizeMessage`
+  used `creator` and a `mentions[]` array — both WRONG.)
+- There is **no `mentions` array** on the message.
+
+### Mention format (decisive)
+A mention is an **inline markup tag inside `text`**:
+```
+<mention object_id="<PARTICIPANT_ID>">display name</mention>
+```
+The `object_id` is the **space-scoped participant id** (same `_participant_<fullSpaceId>_<identity>`
+form). The server confirms it: the trailing `state_updated` carried `unread_mentions: 1` and
+`oldest_unread_mention_order` set to that message's order.
+
+### Required code corrections (Tasks 2 & 10)
+1. `normalizeMessage` (Task 10): read `message.id`, `message.author_id`, `message.text`;
+   `isBotSelf = author_id === ctx.botParticipantId`;
+   `mentionsBot = text.includes('<mention object_id="' + ctx.botParticipantId + '"')`
+   (or regex `/<mention\s+object_id="([^"]+)"/` → any id === botParticipantId).
+2. `stripBotMention` (Task 2): also strip the real tag form
+   `<mention object_id="...">NAME</mention>` (in addition to a legacy `@name`), so the prompt
+   sent to omp is clean text.
+3. Task 12 `subscribeChat`: filter `type === "message_added"` and pass `data.message` to
+   `normalizeMessage`; resolve the per-space `botParticipantId` from `listMembers` matching
+   `identity === botIdentity` (see Task 0.1 correction).
+
+### Consumed by
+- **Tasks 2, 10, 12:** the above three corrections.
