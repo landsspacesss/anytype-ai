@@ -9,6 +9,7 @@ interface Entry {
   client: ManagedClient;
   queue: Promise<unknown>;
   lastUsed: number;
+  pending: number;
 }
 
 export interface SessionManagerOptions {
@@ -59,17 +60,18 @@ export class SessionManager {
         this.releaseSlot();
         throw err;
       }
-      entry = { client, queue: Promise.resolve(), lastUsed: this.now() };
+      entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
       this.entries.set(chatId, entry);
       this.creating--;
     }
     const e = entry;
+    e.pending++;
     const result = e.queue.then(async () => {
       e.lastUsed = this.now();
       return e.client.prompt(prompt);
     });
     e.queue = result.catch(() => undefined);
-    const done = () => this.evictIfContended(chatId, e);
+    const done = (): void => { e.pending--; this.evictIfContended(chatId, e); };
     result.then(done, done);
     return result;
   }
@@ -77,6 +79,7 @@ export class SessionManager {
   // When callers are waiting for a slot, a finished client yields its slot so
   // the next chat can run. With nobody waiting the client stays warm for reuse.
   private async evictIfContended(chatId: string, e: Entry): Promise<void> {
+    if (e.pending > 0) return;                 // still work queued for this chat — keep the client alive
     if (this.waiters.length === 0) return;
     if (this.entries.get(chatId) !== e) return;
     this.entries.delete(chatId);

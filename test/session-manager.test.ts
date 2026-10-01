@@ -28,6 +28,36 @@ describe("SessionManager", () => {
     expect(createClient).toHaveBeenCalledTimes(2);
   });
 
+  it("does not evict a client while same-chat prompts are still queued", async () => {
+    const events: string[] = [];
+    const createClient = vi.fn(async (chatId: string) => {
+      const state = { closed: false };
+      return {
+        get busy() { return false; },
+        async prompt(m: string) {
+          await new Promise(r => setTimeout(r, 10));
+          if (state.closed) throw new Error(`client ${chatId} was closed`);
+          events.push(`prompt${chatId}${m}`);
+          return "ok";
+        },
+        async close() { state.closed = true; events.push(`close${chatId}`); },
+        async abort() {},
+      };
+    });
+    const mgr = new SessionManager({ createClient, maxConcurrent: 1, idleMs: 100000 });
+
+    // Start A's first prompt; once its entry exists, queue a second A prompt
+    // behind it and a B prompt that must wait for the single slot.
+    const p1 = mgr.run("A", "1");
+    await new Promise(r => setTimeout(r, 1));
+    const p2 = mgr.run("A", "2");
+    const p3 = mgr.run("B", "1");
+
+    expect(await Promise.all([p1, p2, p3])).toEqual(["ok", "ok", "ok"]);
+    expect(events.indexOf("closeA")).toBeGreaterThan(events.indexOf("promptA1"));
+    expect(events.indexOf("closeA")).toBeGreaterThan(events.indexOf("promptA2"));
+  });
+
   it("never exceeds maxConcurrent live clients", async () => {
     let live = 0, peak = 0;
     const createClient = vi.fn(async () => {
