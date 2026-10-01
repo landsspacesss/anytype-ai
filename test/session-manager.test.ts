@@ -58,6 +58,47 @@ describe("SessionManager", () => {
     expect(events.indexOf("closeA")).toBeGreaterThan(events.indexOf("promptA2"));
   });
 
+  it("does not leak a client on a same-chat creation race", async () => {
+    let created = 0, closed = 0;
+    const createClient = vi.fn(async () => {
+      created++;
+      await new Promise(r => setTimeout(r, 10));
+      return {
+        get busy() { return false; },
+        async prompt() { await new Promise(r => setTimeout(r, 5)); return "ok"; },
+        async close() { closed++; },
+        async abort() {},
+      };
+    });
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    const p1 = mgr.run("A", "m1");
+    const p2 = mgr.run("A", "m2");
+    expect(await Promise.all([p1, p2])).toEqual(["ok", "ok"]);
+    expect(created - closed).toBe(1);
+  });
+
+  it("reapIdle does not close a chat with pending work", async () => {
+    let closed = false;
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const createClient = vi.fn(async () => ({
+      get busy() { return false; },
+      async prompt() { await gate; return "ok"; },
+      async close() { closed = true; },
+      async abort() {},
+    }));
+    let t = 0;
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100, now: () => t });
+    const p1 = mgr.run("A", "m1");
+    await new Promise(r => setTimeout(r, 1)); // let the entry be created
+    const p2 = mgr.run("A", "m2");            // queue behind the in-flight prompt
+    t = 1000;                                 // advance well past idleMs
+    await mgr.reapIdle();
+    expect(closed).toBe(false);
+    release();
+    expect(await Promise.all([p1, p2])).toEqual(["ok", "ok"]);
+  });
+
   it("never exceeds maxConcurrent live clients", async () => {
     let live = 0, peak = 0;
     const createClient = vi.fn(async () => {

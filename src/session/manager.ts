@@ -60,9 +60,18 @@ export class SessionManager {
         this.releaseSlot();
         throw err;
       }
-      entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
-      this.entries.set(chatId, entry);
-      this.creating--;
+      const existing = this.entries.get(chatId);
+      if (existing) {
+        // Lost a race: another run() for this chat created the entry while we awaited.
+        this.creating--;
+        await client.close().catch(() => undefined);
+        this.releaseSlot();
+        entry = existing;
+      } else {
+        entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
+        this.entries.set(chatId, entry);
+        this.creating--;
+      }
     }
     const e = entry;
     e.pending++;
@@ -90,8 +99,10 @@ export class SessionManager {
   async reapIdle(): Promise<void> {
     const cutoff = this.now() - this.opts.idleMs;
     for (const [chatId, e] of [...this.entries]) {
+      if (e.pending > 0) continue;
       if (e.client.busy) continue;
       if (e.lastUsed < cutoff) {
+        if (this.entries.get(chatId) !== e) continue;
         this.entries.delete(chatId);
         await e.client.close().catch(() => undefined);
         this.releaseSlot();
