@@ -446,10 +446,16 @@ export function shouldTrigger(event: NormalizedEvent): boolean {
 
 export function stripBotMention(text: string, botName: string): string {
   const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`@${escaped}\\b`, "gi");
-  return text.replace(re, " ").replace(/\s+/g, " ").trim();
+  // Real Anytype mention tag (phase0.2): <mention object_id="...">DISPLAY_NAME</mention>
+  const tagRe = new RegExp(`<mention\\b[^>]*>\\s*@?${escaped}\\s*</mention>`, "gi");
+  let out = text.replace(tagRe, " ");
+  // Legacy/plain @name
+  out = out.replace(new RegExp(`@${escaped}\\b`, "gi"), " ");
+  return out.replace(/\s+/g, " ").trim();
 }
 ```
+> **Corrected (phase0.2, 2026-10-02):** the original only stripped a plain `@name`; the real
+> format is an inline `<mention object_id="…">name</mention>` tag. Signature unchanged.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1342,6 +1348,8 @@ Expected: FAIL — module not found.
 import type { NormalizedEvent } from "../types.js";
 
 export interface NormalizeCtx {
+  spaceId: string;
+  chatId: string;
   botParticipantId: string;
   isDirect: boolean;
   objectId?: string;
@@ -1350,23 +1358,28 @@ export interface NormalizeCtx {
 export function normalizeMessage(raw: unknown, ctx: NormalizeCtx): NormalizedEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  const id = r.id, chatId = r.chat_id, spaceId = r.space_id, creator = r.creator, text = r.text;
-  if (typeof id !== "string" || typeof chatId !== "string" || typeof spaceId !== "string") return null;
-  if (typeof creator !== "string") return null;
-  const mentionList = Array.isArray(r.mentions) ? r.mentions : [];
-  const mentions = mentionList as Array<{ participant_id?: string }>;
-  const mentionsBot = mentions.some((m) => m?.participant_id === ctx.botParticipantId);
+  if (typeof r.id !== "string" || typeof r.author_id !== "string") return null;
+  const text = typeof r.text === "string" ? r.text : "";
   return {
-    spaceId,
-    chatId,
-    messageId: id,
-    senderId: creator,
-    text: typeof text === "string" ? text : "",
-    mentionsBot,
-    isBotSelf: creator === ctx.botParticipantId,
+    spaceId: ctx.spaceId,
+    chatId: ctx.chatId,
+    messageId: r.id,
+    senderId: r.author_id,
+    text,
+    mentionsBot: hasMentionOf(text, ctx.botParticipantId),
+    isBotSelf: r.author_id === ctx.botParticipantId,
     isDirect: ctx.isDirect,
     objectId: ctx.objectId,
   };
+}
+
+export function hasMentionOf(text: string, participantId: string): boolean {
+  const re = /<mention\b[^>]*\bobject_id="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1] === participantId) return true;
+  }
+  return false;
 }
 
 export function parseSseChunk(buffer: string): { events: unknown[]; rest: string } {
@@ -1384,6 +1397,10 @@ export function parseSseChunk(buffer: string): { events: unknown[]; rest: string
   return { events, rest };
 }
 ```
+> **Corrected (phase0.2, 2026-10-02):** the real message uses `author_id` (not `creator`) and has
+> **no `mentions` array** and **no space/chat ids** — a mention is an inline
+> `<mention object_id="…">name</mention>` tag inside `text`, and space/chat come from the
+> subscription `ctx`. `parseSseChunk` is unchanged (it already handles the real SSE lines).
 
 - [ ] **Step 4: Run to verify it passes**
 
