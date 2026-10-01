@@ -5,6 +5,64 @@
 
 ---
 
+## Task 0.1 — anytype-cli bring-up and bot account (VERIFIED 2026-10-02)
+
+**Status:** DONE (bring-up + key creation verified). One prerequisite remains for the user:
+the bot must be **invited into a user space** (see below).
+
+### Bring-up
+- Enabled the commented `anytype-cli_bootstrap` + `anytype-cli` services in
+  `/home/landspace/anytype/docker-compose.yml`. Bootstrap exits 0; `anytype-cli` is
+  `Up (healthy)`.
+- Bot account created. **Account name:** `anytype-bot`. **Identity:**
+  `A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm`.
+
+### API key
+- Created with `anytype auth apikey create ai-bot --all-spaces --read-write` (run inside
+  the container). Stored in the bot's `.env` as `ANYTYPE_API_KEY` (not committed).
+- Verified: `GET /v2/auth/whoami` → 200, grant `all_spaces: true, permission: readwrite`,
+  `api.version: 2025-11-08`.
+
+### ⚠️ Two corrections to the plan's Task 0.1 steps
+1. **`/v2/validate` does not exist** (returns 404). The plan's Step-3 probe path was wrong.
+   Verified liveness with `/v2/auth/whoami` instead: **401** without a key, **200** with one.
+2. **The JSON API binds `127.0.0.1` inside the container by default** — the host's published
+   port forwards to the container IP, which the loopback-bound server refuses. Also, the
+   API enforces a **Host/origin allowlist** (`403 {"code":"forbidden","message":"request
+   origin is not allowed"}`) that rejects the docker service name `anytype-cli:31012`.
+
+### ✅ Networking solution (drives Task 12 + Task 13)
+Run the **bot container with `network_mode: "service:anytype-cli"`** and point it at
+`ANYTYPE_API_BASE_URL=http://127.0.0.1:31012`. The bot then shares anytype-cli's network
+namespace, so the Host header is `127.0.0.1:31012` (allowlisted) and the loopback bind is
+reachable. Verified: from a container sharing that netns, `whoami` → **200**, and outbound
+internet still works (`api.github.com` → 200).
+- Also set `anytype-cli` `command: ["serve", "--listen-address", "0.0.0.0:31012"]` and
+  publish its host ports on `127.0.0.1` only (debug access; not exposed to the LAN).
+
+### API shapes discovered (drive Task 8 / Task 10 / Task 12)
+- `GET /v2/spaces` → `{"data":[{"id":"7lotza","name":""}],"total":1,...}` — the **space id is
+  the short form `7lotza`** (not the long `bafyrei…​.ul3mpmpp76eu` the CLI's `space list`
+  prints). Client code must use the id the API returns.
+- `GET /v2/spaces/{id}/members` → `{"data":[{"id":"_participant_<fullSpaceId>_<identity>",
+  "name":"anytype-bot","role":"owner","identity":"<identity>"}]}`. So a member's
+  **participant id** is `_participant_<fullSpaceId>_<identity>`; this is the value the
+  mention-detection (`BOT_PARTICIPANT_ID`) will match against.
+- `GET /v2/spaces/{id}/chats?limit=20` → `{"data":[],...}` when no chats exist.
+
+### Prerequisite for the user (blocks end-to-end)
+The only space present is the **bot's own** (single member = the bot, owner; 0 chats).
+For the bot to be @-mentioned it must be a member of a space the user is also in:
+**invite `anytype-bot` into a user space**, or have the user join the bot's space. Until then
+Tasks 10/12 can be built but not exercised end-to-end.
+
+### Consumed by
+- **Task 12:** `ANYTYPE_API_BASE_URL=http://127.0.0.1:31012`; use the API-returned short
+  space id; `BOT_PARTICIPANT_ID=_participant_<fullSpaceId>_<identity>`.
+- **Task 13:** compose `network_mode: "service:anytype-cli"` (not `networks: [anytype_default]`).
+
+---
+
 ## Task 0.3 — omp install, RPC, and mnemopi concurrency (inside a container)
 
 **Status:** DONE_WITH_CONCERNS — steps 1 and 2 fully verified; step 3 (mnemopi store

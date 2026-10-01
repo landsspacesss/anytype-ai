@@ -46,8 +46,10 @@ Expected: bootstrap exits `0`; `anytype-cli` is `Up`.
 
 - [ ] **Step 3: Verify the API answers**
 
-Run: `curl -s http://127.0.0.1:31012/v2/validate -H "Authorization: Bearer invalid" -o /dev/null -w "%{http_code}\n"`
-Expected: `401` (server is up; key rejected). If connection refused, check `docker compose logs anytype-cli`.
+Run: `curl -s http://127.0.0.1:31012/v2/auth/whoami -o /dev/null -w "%{http_code}\n"`
+Expected: `401` (server is up; no key supplied). If connection refused, check
+`docker compose logs anytype-cli`. NOTE: `/v2/validate` does not exist (returns 404) — it was
+the plan's earlier wrong probe path (phase0 finding).
 
 - [ ] **Step 4: Create the API key**
 
@@ -232,7 +234,7 @@ dist/
 
 ```bash
 # .env.example
-ANYTYPE_API_BASE_URL=http://anytype-cli:31012
+ANYTYPE_API_BASE_URL=http://127.0.0.1:31012
 ANYTYPE_API_KEY=change-me
 BOT_PARTICIPANT_ID=change-me
 # omp refuses to start without a model provider key (phase0 finding: "No models available").
@@ -299,7 +301,7 @@ import { loadConfig } from "../src/config.js";
 describe("loadConfig", () => {
   it("reads required values and applies defaults", () => {
     const cfg = loadConfig({
-      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_BASE_URL: "http://127.0.0.1:31012",
       ANYTYPE_API_KEY: "k",
       BOT_PARTICIPANT_ID: "pid",
     } as NodeJS.ProcessEnv);
@@ -1734,8 +1736,10 @@ services:
     volumes:
       - bot_state:/root/.omp/agent
       - bot_workspace:/workspace
-    networks:
-      - anytype_default
+    # Share anytype-cli's network namespace so the API is reachable at
+    # 127.0.0.1:31012 with an allowlisted Host header (phase0 finding: the API
+    # binds loopback-only and rejects the docker service-name origin).
+    network_mode: "service:anytype-cli"
     deploy:
       resources:
         limits:
@@ -1744,12 +1748,18 @@ services:
 volumes:
   bot_state:
   bot_workspace:
-
-networks:
-  anytype_default:
-    external: true
-    name: anytype_default
 ```
+
+**Networking constraint (phase0 finding).** `network_mode: "service:anytype-cli"` only
+resolves when `anytype-cli` is a service **in the same compose project**. Two supported ways:
+1. **Merge compose files (preferred):** run the bot with both files in one project —
+   `docker compose -f /home/landspace/anytype/docker-compose.yml -f docker-compose.bot.yml up -d`.
+   Then `service:anytype-cli` resolves and the bot shares its netns.
+2. **Add the service to the any-sync project** as an override in `/home/landspace/anytype/`.
+
+Either way the bot reaches the API at `ANYTYPE_API_BASE_URL=http://127.0.0.1:31012`. Any other
+approach (plain `networks: [anytype_default]` + service-name URL) fails the API's origin
+allowlist — verified 403. Confirm the exact invocation works during Task 13.
 
 - [ ] **Step 4: Build the image**
 
