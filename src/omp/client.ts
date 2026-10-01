@@ -7,7 +7,15 @@ export interface SpawnOptions {
   args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * How long to wait for omp's `ready` frame (ms). omp cold start can be slow,
+   * so the default is generous; tests may set it low.
+   */
+  readyTimeoutMs?: number;
 }
+
+/** omp cold start routinely exceeds 15s; allow up to 90s by default. */
+const DEFAULT_READY_TIMEOUT_MS = 90000;
 
 export class OmpClient {
   private child: ChildProcessWithoutNullStreams;
@@ -34,10 +42,10 @@ export class OmpClient {
     const args = opts.args ?? ["--mode", "rpc"];
     const child = spawn(opts.bin, args, { cwd: opts.cwd, env: opts.env }) as ChildProcessWithoutNullStreams;
     const client = new OmpClient(child);
-    return client.waitReady().then(() => client);
+    return client.waitReady(opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS).then(() => client);
   }
 
-  private waitReady(): Promise<void> {
+  private waitReady(timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
       const onFrame = (line: string) => {
         try {
@@ -49,7 +57,7 @@ export class OmpClient {
         } catch { /* ignore non-JSON */ }
       };
       this.rl.on("line", onFrame);
-      setTimeout(() => reject(new Error("omp ready timeout")), 15000).unref?.();
+      setTimeout(() => reject(new Error("omp ready timeout")), timeoutMs).unref?.();
     });
   }
 

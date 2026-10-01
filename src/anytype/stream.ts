@@ -12,10 +12,20 @@ export function handleEvent(
   ev: unknown,
   ctx: NormalizeCtx,
   onEvent: (e: NormalizedEvent) => void,
+  since?: string,
 ): void {
   if (!ev || typeof ev !== "object") return;
   const wrapper = ev as { type?: unknown; message?: unknown };
   if (wrapper.type !== "message_added") return;
+  // Backlog suppression: the stream replays the last `limit` messages as
+  // `message_added` on connect. Skip any message whose ISO-8601 `at` predates
+  // `since` (subscription start). ISO-8601 UTC strings compare lexicographically.
+  // Fail-open: messages with no/absent `at` are never skipped.
+  if (since) {
+    const raw = wrapper.message as { at?: unknown } | null | undefined;
+    const at = raw && typeof raw === "object" ? raw.at : undefined;
+    if (typeof at === "string" && at < since) return;
+  }
   const normalized = normalizeMessage(wrapper.message, ctx);
   if (normalized) onEvent(normalized);
 }
@@ -28,6 +38,11 @@ export interface StreamDeps {
   isDirect: boolean;
   botParticipantId: string;
   objectId?: string;
+  /**
+   * ISO-8601 timestamp of subscription start. Messages replayed by the stream
+   * with an older `at` (the backlog) are dropped; missing `at` fails open.
+   */
+  since?: string;
   onEvent: (e: NormalizedEvent) => void;
   /** Injectable for tests; defaults to the global fetch. */
   fetchFn?: typeof fetch;
@@ -66,7 +81,7 @@ export function subscribeChat(deps: StreamDeps, signal: AbortSignal): Promise<vo
           buffer += decoder.decode(value, { stream: true });
           const { events, rest } = parseSseChunk(buffer);
           buffer = rest;
-          for (const raw of events) handleEvent(raw, ctx, deps.onEvent);
+          for (const raw of events) handleEvent(raw, ctx, deps.onEvent, deps.since);
         }
       } catch {
         if (signal.aborted) return;

@@ -63,6 +63,11 @@ async function main(): Promise<void> {
   };
 
   // Discover spaces -> chats and subscribe to each chat's SSE stream.
+  // Captured ONCE before any subscription: the stream replays recent history as
+  // `message_added` on connect, and any message older than this start instant is
+  // backlog we must not answer. One shared timestamp keeps every subscription
+  // consistent regardless of discovery order.
+  const startedAt = new Date().toISOString();
   const spaces = await api.listSpaces();
   let subscriptions = 0;
   for (const space of spaces) {
@@ -99,6 +104,7 @@ async function main(): Promise<void> {
           chatId: chat.id,
           isDirect,
           botParticipantId,
+          since: startedAt,
           onEvent,
         },
         controller.signal,
