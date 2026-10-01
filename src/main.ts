@@ -40,7 +40,9 @@ async function main(): Promise<void> {
       fs.mkdirSync(dir, { recursive: true });
       return OmpClient.spawn({
         bin: cfg.ompBin,
-        args: ["--mode", "rpc", "--no-session", "--name", `chat-${chatId}`],
+        // omp does NOT support --name (that is a pi flag); passing it makes omp
+        // exit with "unknown flag: --name" before it ever emits `ready`.
+        args: ["--mode", "rpc", "--no-session"],
         cwd: dir,
       });
     },
