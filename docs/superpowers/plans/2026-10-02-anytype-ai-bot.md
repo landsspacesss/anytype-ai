@@ -906,6 +906,7 @@ interface Entry {
   client: ManagedClient;
   queue: Promise<unknown>;
   lastUsed: number;
+  pending: number; // queued + in-flight prompts for this chat
 }
 
 export interface SessionManagerOptions {
@@ -927,8 +928,14 @@ export class SessionManager {
 
   private get liveCount(): number { return this.entries.size + this.creating; }
 
+  // Reserve the slot synchronously, before any await. Counting the slot only
+  // after `createClient` resolved would let concurrent callers all observe
+  // `liveCount < maxConcurrent` and overshoot the cap.
   private async acquireSlot(): Promise<void> {
-    if (this.liveCount < this.opts.maxConcurrent) return;
+    if (this.liveCount < this.opts.maxConcurrent) {
+      this.creating++;
+      return;
+    }
     await new Promise<void>((resolve) => this.waiters.push(resolve));
     return this.acquireSlot();
   }
@@ -942,22 +949,41 @@ export class SessionManager {
     let entry = this.entries.get(chatId);
     if (!entry) {
       await this.acquireSlot();
+      let client: ManagedClient;
       try {
-        this.creating++;
-        const client = await this.opts.createClient(chatId);
-        entry = { client, queue: Promise.resolve(), lastUsed: this.now() };
-        this.entries.set(chatId, entry);
-      } finally {
+        client = await this.opts.createClient(chatId);
+      } catch (err) {
         this.creating--;
+        this.releaseSlot();
+        throw err;
       }
+      entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
+      this.entries.set(chatId, entry);
+      this.creating--;
     }
     const e = entry;
+    e.pending++;
     const result = e.queue.then(async () => {
       e.lastUsed = this.now();
       return e.client.prompt(prompt);
     });
     e.queue = result.catch(() => undefined);
+    const done = (): void => { e.pending--; this.evictIfContended(chatId, e); };
+    result.then(done, done);
     return result;
+  }
+
+  // When callers are waiting for a slot, a finished client yields its slot so
+  // the next chat can run. With nobody waiting the client stays warm for reuse.
+  // Never evict while this chat still has queued work (pending > 0), or a queued
+  // same-chat prompt would run against a closed client.
+  private async evictIfContended(chatId: string, e: Entry): Promise<void> {
+    if (e.pending > 0) return;
+    if (this.waiters.length === 0) return;
+    if (this.entries.get(chatId) !== e) return;
+    this.entries.delete(chatId);
+    await e.client.close().catch(() => undefined);
+    this.releaseSlot();
   }
 
   async reapIdle(): Promise<void> {
@@ -981,10 +1007,19 @@ export class SessionManager {
 }
 ```
 
+> **Plan correction (2026-10-02):** this code was corrected during execution. The
+> original version (a) counted a slot *after* `await`, so concurrent callers raced
+> past `maxConcurrent` (observed peak 4 with cap 2), and (b) had no way to free a
+> slot when a client finished a prompt, so the concurrency test deadlocked. Fixed by
+> reserving the slot before the await and adding `evictIfContended` (evict a finished
+> chat's client when callers wait). A follow-up bug — evicting a chat whose *own*
+> second prompt was still queued — is prevented by the `pending` counter guard. A
+> 4th test covers this. See `phase0`-style notes in the SDD ledger.
+
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `npx vitest run test/session-manager.test.ts`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
 
