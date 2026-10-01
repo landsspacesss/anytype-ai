@@ -18,6 +18,6 @@ describe("loadConfig", () => {
   });
 
   it("throws when a required value is missing", () => {
-    expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/ANYTYPE_API_KEY/);
+    expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/Missing required env var/);
   });
 });
