@@ -31,6 +31,14 @@ export class AnytypeClient {
     if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
   }
 
+  async listSpaces(): Promise<Array<{ id: string; name: string }>> {
+    const url = `${this.baseUrl}/v2/spaces`;
+    const res = await this.fetchFn(url, { headers: this.headers() });
+    if (!res.ok) throw new Error(`listSpaces failed: ${res.status}`);
+    const body = (await res.json()) as { data?: Array<{ id: string; name?: string }> };
+    return (body.data ?? []).map((s) => ({ id: s.id, name: s.name ?? "" }));
+  }
+
   async listChats(spaceId: string): Promise<ChatRow[]> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats?limit=200`;
     const res = await this.fetchFn(url, { headers: this.headers() });

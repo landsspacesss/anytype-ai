@@ -25,7 +25,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     apiKey: required(env, "ANYTYPE_API_KEY"),
     apiBaseUrl: required(env, "ANYTYPE_API_BASE_URL"),
-    botParticipantId: required(env, "BOT_PARTICIPANT_ID"),
+    // The bot's participant id is SPACE-SCOPED (phase0 finding): a single
+    // constant is only a fallback when BOT_IDENTITY is not provided. main.ts
+    // resolves the real per-space id from listMembers().
+    botParticipantId: env.BOT_PARTICIPANT_ID ?? "",
+    botIdentity: env.BOT_IDENTITY || undefined,
     ompBin: env.OMP_BIN || "omp",
     ompWorkspaceRoot: env.OMP_WORKSPACE_ROOT || "/workspace",
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),

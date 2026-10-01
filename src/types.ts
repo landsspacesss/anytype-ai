@@ -31,6 +31,7 @@ export interface Config {
   apiBaseUrl: string;
   apiKey: string;
   botParticipantId: string;
+  botIdentity?: string;
   ompBin: string;
   ompWorkspaceRoot: string;
   maxConcurrentSessions: number;

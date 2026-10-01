@@ -32,4 +32,14 @@ describe("loadConfig", () => {
     expect(cfg.replyMaxLen).toBe(4000);
     expect(cfg.maxConcurrentSessions).toBe(3);
   });
+
+  it("reads BOT_IDENTITY and treats BOT_PARTICIPANT_ID as optional", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      BOT_IDENTITY: "A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.botIdentity).toBe("A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm");
+    expect(cfg.botParticipantId).toBe("");
+  });
 });
