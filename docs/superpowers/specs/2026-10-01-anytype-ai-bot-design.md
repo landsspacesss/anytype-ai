@@ -20,7 +20,7 @@ Anytype 没有内置 AI——"在客户端内 @AI 让它回复"不是原生功�
 | R3 | 隔离 | **严格隔离**：容器只有自己的临时工作区 + 网络访问，碰不到主机文件 |
 | R4 | 大脑 | **omp**（Oh My Pi，pi 的 fork） |
 | R5 | 模型 | 可切换（首版先跑通，不锁定 provider） |
-| R6 | 全局记忆 | 跨所有会话共享；由**模型自己整理**（mnemopi，`scoping=global`，`llmMode=smol`） |
+| R6 | 记忆 | **按 space（工作区）隔离**，同一 space 内跨所有聊天/讨论共享；由**模型自己整理**（mnemopi，`llmMode=smol`） |
 | R7 | 会话划分 | 按 `chat_id` 区分；页面讨论与主聊天**天然是不同 chat**，无需额外逻辑 |
 | R8 | 触发 | 聊天内**被 @** 才回；**私聊每条都回**；bot 自己发的消息**永不触发** |
 | R9 | 忙时 | **按序排队**（每条消息 = 一个 prompt） |
@@ -129,18 +129,31 @@ bridge 内部四个模块，边界清晰、可独立测试：
 
 可选优化：拉起会话时用 `GET /v2/spaces/{space}/objects/{object_id}` 取页面标题，给 omp 会话 `--name`，便于在会话列表中辨认。
 
-## 7. 全局记忆
+### 作用域总览
+
+| 轴 | 作用域 | 说明 |
+|---|---|---|
+| **对话（实时上下文）** | `chat_id` | 每个聊天/讨论一条独立对话线 |
+| **记忆** | `space_id` | 同一工作区内跨聊天共享（§7） |
+
+即：**每个 space 一个"AI 大脑"（记忆），space 内每个 chat 各自一条对话线，但都读写同一份 space 记忆。** 主聊天与文档讨论中的内容，bot 都记得，但两条对话不会互相串味。
+
+## 7. 记忆（按 space 隔离）
 
 用 **omp 内置的 mnemopi 后端**，不自行实现。
 
 - `memory.backend = mnemopi`
-- `mnemopi.scoping = global` —— **一个记忆库，所有会话可见**（跨 chat 共享）
+- **作用域 = space**：让每个 space 用**独立工作目录**（`/workspace/<spaceId>/`），配合 mnemopi 默认的 `per-project` 隔离 → **每个 space 一个独立记忆库**。等价替代：给每个 space 设 `mnemopi.bank = omp-<spaceId>`。
 - `mnemopi.llmMode = smol` —— 记忆的提取/整理由模型自己完成（对话文本会到达 provider）
 - `autoRecall` / `autoRetain` 保持默认开启
 
-持久化：记忆存容器内 `~/.omp/agent/memories/mnemopi/`。**挂专用 Docker volume** 覆盖 `~/.omp/agent/`（含 sessions、memories、config），使容器重建不丢。仍是容器自有卷，不挂主机路径，符合 R3。
+**为什么按 space 而非"真全局"**：Anytype 用 space 作为其原生边界（独立密钥、独立权限）。"真全局记忆"会跨过该边界——工作区事实漏入个人空间。按 space 分即"每个工作区一套 AI 记忆"，与心智模型一致；单 space 时二者等价。
 
-> 概念区分：**全局记忆** = bot 跨会话记住"你说过的事"（本节，mnemopi）；**知识库检索** = bot 能查 Anytype 里的笔记（由 agent 容器的 `anytype-mcp` 提供，另一机制）。两者都要。
+**边界内的行为**：同一 space 内，所有 chat 的 omp 进程共用同一工作目录 → 共用同一记忆库 → 你在主聊天说的、在某文档讨论说的，**bot 都记得**；但各自对话上下文独立（§6）。
+
+持久化：记忆存容器内 `~/.omp/agent/memories/mnemopi/`（按工作目录分库）。**挂专用 Docker volume** 覆盖 `~/.omp/agent/`（含 sessions、memories、config），使容器重建不丢。仍是容器自有卷，不挂主机路径，符合 R3。
+
+> 概念区分：**记忆** = bot 跨会话记住"你说过的事"（本节，mnemopi，按 space）；**知识库检索** = bot 能查 Anytype 里的笔记（由 agent 容器的 `anytype-mcp` 提供，另一机制）。两者都要。
 
 ## 8. 错误处理
 
@@ -179,7 +192,7 @@ bridge 内部四个模块，边界清晰、可独立测试：
 | # | 风险 | 缓解 |
 |---|---|---|
 | V1 | HTTP v2 只有 **per-chat SSE**，无账号级总流；`list_chats` 是否列出"页面讨论"未知（`ChatRow` 仅 id+name） | 首版：枚举空间 chats 逐个订阅；**实测**若漏讨论，改用 anytype-cli 的 gRPC 账号级事件流 `ListenSessionEvents` |
-| V2 | 多个 omp 进程共享同一 mnemopi SQLite 库，官方**未说明**并发安全 | 并发上限 3；**实测**争用；退路是记忆服务化（复杂，尽量避免） |
+| V2 | 同一 space 内多个 omp 进程共享该 space 的 mnemopi SQLite 库，官方**未说明**并发安全 | 并发上限 3；**实测**争用；退路是记忆服务化（复杂，尽量避免） |
 | V3 | 完整 agent = 能跑命令，安全敏感 | 严格隔离容器（R3）+ 并发/资源限制 |
 | V4 | omp 未安装；`omp.sh/install` 可信度需确认 | 安装前核对来源与校验；备选 npm 包 `@oh-my-pi/pi-ai` |
 
