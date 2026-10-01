@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   });
 
   const router = new Router({
-    botName: "ai",
+    botName: cfg.botDisplayName,
     run: (_spaceId, chatId, prompt) => sessions.run(chatId, prompt),
     send: (target, text) => sink.send(target, text),
   });
@@ -129,4 +129,7 @@ async function main(): Promise<void> {
   });
 }
 
-void main();
+main().catch((err) => {
+  console.error("fatal:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});

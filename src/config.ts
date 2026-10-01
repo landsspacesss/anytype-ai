@@ -30,6 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // resolves the real per-space id from listMembers().
     botParticipantId: env.BOT_PARTICIPANT_ID ?? "",
     botIdentity: env.BOT_IDENTITY || undefined,
+    botDisplayName: env.BOT_DISPLAY_NAME || "anytype-bot",
     ompBin: env.OMP_BIN || "omp",
     ompWorkspaceRoot: env.OMP_WORKSPACE_ROOT || "/workspace",
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),

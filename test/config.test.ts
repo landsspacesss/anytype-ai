@@ -42,4 +42,19 @@ describe("loadConfig", () => {
     expect(cfg.botIdentity).toBe("A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm");
     expect(cfg.botParticipantId).toBe("");
   });
+
+  it("reads BOT_DISPLAY_NAME and defaults to anytype-bot", () => {
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      BOT_DISPLAY_NAME: "custom",
+    } as NodeJS.ProcessEnv);
+    expect(custom.botDisplayName).toBe("custom");
+
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.botDisplayName).toBe("anytype-bot");
+  });
 });
