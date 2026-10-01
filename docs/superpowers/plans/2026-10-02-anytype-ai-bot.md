@@ -235,6 +235,9 @@ dist/
 ANYTYPE_API_BASE_URL=http://anytype-cli:31012
 ANYTYPE_API_KEY=change-me
 BOT_PARTICIPANT_ID=change-me
+# omp refuses to start without a model provider key (phase0 finding: "No models available").
+# Set whichever provider you use; omp auto-detects these env vars.
+ANTHROPIC_API_KEY=
 OMP_BIN=omp
 OMP_WORKSPACE_ROOT=/workspace
 MAX_CONCURRENT_SESSIONS=3
@@ -558,7 +561,7 @@ const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
-  if (msg.command === "prompt") {
+  if (msg.type === "prompt") {
     send({ id: msg.id, type: "response", command: "prompt", success: true, data: { agentInvoked: true } });
     send({ type: "agent_start" });
     const text = `echo: ${msg.message}`;
@@ -566,7 +569,7 @@ rl.on("line", (line) => {
       send({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: ch } });
     }
     send({ type: "agent_end", isTerminal: true });
-  } else if (msg.command === "abort") {
+  } else if (msg.type === "abort") {
     send({ id: msg.id, type: "response", command: "abort", success: true });
     send({ type: "agent_end", isTerminal: true });
   }
@@ -736,7 +739,9 @@ export class OmpClient {
     return new Promise<string>((resolve, reject) => {
       this.resolvePrompt = resolve;
       this.rejectPrompt = reject;
-      this.write({ id: this.nextId++, command: "prompt", message });
+      // omp RPC: the command NAME goes in the `type` field (verified against real
+      // omp 18.4.9 — `{id, command:"prompt"}` returns "Unknown command: undefined").
+      this.write({ id: this.nextId++, type: "prompt", message });
     });
   }
 
@@ -802,7 +807,7 @@ Add method:
 ```typescript
   async abort(): Promise<void> {
     if (!this.inFlight) return;
-    this.write({ id: this.nextId++, command: "abort" });
+    this.write({ id: this.nextId++, type: "abort" });
   }
 ```
 
@@ -1663,7 +1668,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl bash git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install omp (verify method per phase0 findings; fallback: npm i -g @oh-my-pi/pi-ai)
+# Install omp. github.com is reachable from this build env (controller-verified),
+# so the stock installer works. If the release-asset download times out, use the
+# phase0-findings fallback (download the release asset via api.github.com).
 RUN curl -fsSL https://omp.sh/install | sh
 ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
 

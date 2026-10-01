@@ -102,6 +102,22 @@ unverified.
   key (set `-e ANTHROPIC_API_KEY=...` or `OPENAI_API_KEY`/`GEMINI_API_KEY`) before relying on
   heavy concurrent writes.
 
+### Controller verification (2026-10-02)
+
+- **The "`github.com` UNREACHABLE" claim above is NOT reproducible and is treated as
+  incorrect.** Re-tested from both the host and a fresh `node:20-bookworm-slim`
+  container: `https://github.com` → **200** (host 0.97s; container 542ms), `api.github.com`
+  → 200, `omp.sh` → 200. The timeouts seen during Task 0.3 were transient. **Consequence:**
+  Task 13 may use the stock installer (`curl -fsSL https://omp.sh/install | sh`); the
+  api.github.com asset-download method is retained only as a documented fallback.
+- **The RPC `type`-field finding is accepted** (backed by direct observation with the
+  exact `Unknown command: undefined` error, not a timeout). Plan Tasks 4 and 5 have been
+  corrected to send `{id, type: "prompt"|"abort", ...}` and the fake omp discriminates on
+  `msg.type`. **Consequence:** unit tests and the in-container E2E now agree.
+- **`omp` requires a model provider key to start** (`No models available` otherwise) —
+  added provider key placeholders to `.env.example` (Task 1) so Task 13's container can
+  boot omp.
+
 ### Consumed by
 
 - **Task 13 (Dockerfile):** use the GitHub-API asset download method above; put `omp` at
