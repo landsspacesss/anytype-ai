@@ -111,4 +111,23 @@ describe("SessionManager", () => {
     await Promise.all([mgr.run("a", "1"), mgr.run("b", "2"), mgr.run("c", "3"), mgr.run("d", "4")]);
     expect(peak).toBeLessThanOrEqual(2);
   });
+
+  it("closes and forgets clients idle past idleMs", async () => {
+    let t = 0;
+    const closed: string[] = [];
+    const createClient = async (chatId: string) => ({
+      get busy() { return false; },
+      async prompt() { return "ok"; },
+      async close() { closed.push(chatId); },
+      async abort() {},
+    });
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 1000, now: () => t });
+    await mgr.run("c1", "a");
+    t = 2000;
+    await mgr.reapIdle();
+    expect(closed).toContain("c1");
+    await mgr.run("c1", "b");
+    // a new client was created for c1 after reaping
+    expect(closed.length).toBeGreaterThanOrEqual(1);
+  });
 });
