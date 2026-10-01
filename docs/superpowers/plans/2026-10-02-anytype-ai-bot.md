@@ -107,29 +107,49 @@ git add docs/superpowers/plans/phase0-findings.md
 git commit -m "docs: phase0 findings — event strategy decision"
 ```
 
-### Task 0.3: Verify omp install, RPC, and mnemopi concurrency
+### Task 0.3: Verify omp install, RPC, and mnemopi concurrency (inside a container)
 
 **Files:**
 - Modify: `docs/superpowers/plans/phase0-findings.md`
 
 **Interfaces:**
-- Produces: confirmed omp install method + `ompBin` path name, and a verdict on multi-process mnemopi safety. Consumed by Task 13 (Dockerfile) and §7 (memory).
+- Produces: confirmed omp install method, and a verdict on multi-process mnemopi safety. Consumed by Task 13 (Dockerfile) and §7 (memory).
 
-- [ ] **Step 1: Install omp and verify the source**
+> omp is installed **in the agent container**, never on the host (the host does not need it; unit tests use a fake omp; only the in-container E2E uses real omp). All of Phase 0.3 therefore runs inside a throwaway container built from the same base as Task 13.
 
-Run: `curl -fsSL https://omp.sh/install | sh && omp --version`
-Then inspect the install script (`curl -fsSL https://omp.sh/install`) and confirm it does not do anything unexpected (arbitrary remote execution beyond installing the binary). Record the version and the install method.
-**Fallback if untrusted:** install from npm `@oh-my-pi/pi-ai` (latest `18.4.9` at time of writing) or build from `github.com/can1357/oh-my-pi`.
+- [ ] **Step 1: Build a throwaway image mirroring the container install**
 
-- [ ] **Step 2: Smoke-test RPC**
+```bash
+docker build -t omp-phase0 - <<'EOF'
+FROM node:20-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates bash \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://omp.sh/install | sh
+ENV PATH="/root/.local/bin:/usr/local/bin:/usr/bin:$PATH"
+EOF
+docker run --rm omp-phase0 omp --version
+```
+Expected: prints an omp version. Also inspect the install script (`curl -fsSL https://omp.sh/install`) and confirm it only installs the binary.
+**Fallback if untrusted/unsupported:** npm `@oh-my-pi/pi-ai` or build from `github.com/can1357/oh-my-pi`; adjust Task 13's Dockerfile accordingly.
 
-Run: `printf '{"id":1,"command":"get_state"}\n' | omp --mode rpc --no-session`
+- [ ] **Step 2: Smoke-test RPC in the container**
+
+```bash
+docker run --rm -i omp-phase0 bash -lc 'printf "{\"id\":1,\"command\":\"get_state\"}\n" | omp --mode rpc --no-session'
+```
 Expected: a `{"type":"ready",...}` frame first, then a response to `get_state`.
 
-- [ ] **Step 3: Test two processes against one mnemopi store**
+- [ ] **Step 3: Test two processes against one mnemopi store, in the container**
 
-Set `~/.omp/agent/config.yml` to `memory.backend: mnemopi`. Launch two concurrent `omp --mode rpc` processes sharing the same workspace dir; send a `prompt` to each.
-Expected: both complete without SQLite lock errors. If lock errors appear, record them (V2 risk) — mitigation stays "cap concurrency at 3".
+```bash
+docker run --rm -v /tmp/omp-phase0:/root/.omp -e PROVIDER=<p> -e MODEL=<m> -e API_KEY=<k> omp-phase0 bash -lc '
+  mkdir -p /root/.omp/agent && printf "memory:\n  backend: mnemopi\n" > /root/.omp/agent/config.yml;
+  for i in 1 2; do
+    ( printf "{\"id\":1,\"command\":\"prompt\",\"message\":\"remember test-$i\"}\n"; sleep 8 ) \
+      | omp --mode rpc --no-session --provider "$PROVIDER" --model "$MODEL" --api-key "$API_KEY" &
+  done; wait'
+```
+Substitute a provider/model you have a key for. Expected: both complete without SQLite lock errors. If lock errors appear, record them (V2) — mitigation stays "cap concurrency at 3". (Needs a provider key; may be deferred if none is available yet.)
 
 - [ ] **Step 4: Record and commit**
 
