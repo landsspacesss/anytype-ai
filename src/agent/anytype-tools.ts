@@ -1670,6 +1670,31 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const runInSpaceTool = defineTool({
+    name: "anytype_run_in_space",
+    label: "Run a task in another space",
+    description:
+      "Dispatch a ONE-SHOT worker bound to a TARGET space (by id or name) that runs `task` inside that space's own context/memory and can read AND write it. Use it to delegate a writing/org task to a specific space without cluttering this conversation. The worker does not see this conversation, so `task` must be self-contained. Only available in an UNLOCKED console.",
+    promptSnippet: "anytype_run_in_space — delegate a task to another space's worker (reads+writes it)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      space: Type.String({ description: "Target space id or name." }),
+      task: Type.String({ description: "A self-contained task for the worker." }),
+    }),
+    async execute(_id, params) {
+      if (!consoleDep?.runInSpace) return textResult("anytype_run_in_space unavailable in this session.");
+      const task = typeof params.task === "string" ? params.task.trim() : "";
+      if (!params.space || task.length === 0) {
+        return textResult("anytype_run_in_space: provide `space` and a non-empty `task`.");
+      }
+      try {
+        return textResult(await consoleDep.runInSpace(params.space, task));
+      } catch (err) {
+        return textResult(`anytype_run_in_space failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1707,6 +1732,7 @@ export function createAnytypeTools(deps: {
   // Cross-space read tools and the memory aggregate are only for the global
   // console session.
   if (consoleDep) tools.push(listSpaces, memories, joinSpace);
+  if (consoleDep?.runInSpace) tools.push(runInSpaceTool);
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so
   // they cannot spawn further sub-agents (no recursion).

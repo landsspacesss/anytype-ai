@@ -98,6 +98,34 @@ describe("console tool gating", () => {
     expect(joinSpace).toHaveBeenCalledWith("https://hi.any.coop/X#Y");
     expect(text).toContain("joined");
   });
+
+  it("anytype_run_in_space registered only with a console runInSpace", () => {
+    const noRun = createAnytypeTools(baseDeps(fakeApi(), true)); // console dep w/o runInSpace
+    expect(toolNames(noRun)).not.toContain("anytype_run_in_space");
+
+    const runInSpace = vi.fn(async () => "done");
+    const deps = { ...baseDeps(fakeApi(), false), console: { workspaceRoot: "/tmp/ws", runInSpace } };
+    const tools = createAnytypeTools(deps);
+    expect(toolNames(tools)).toContain("anytype_run_in_space");
+  });
+
+  it("anytype_run_in_space forwards space + task and returns the result", async () => {
+    const runInSpace = vi.fn(async (s: string, t: string) => `ran ${t} in ${s}`);
+    const deps = { ...baseDeps(fakeApi(), false), console: { workspaceRoot: "/tmp/ws", runInSpace } };
+    const t = createAnytypeTools(deps).find((x) => x.name === "anytype_run_in_space")!;
+    const text = ((await t.execute("id", { space: "考试", task: "整理" })).content[0] as { text: string }).text;
+    expect(runInSpace).toHaveBeenCalledWith("考试", "整理");
+    expect(text).toContain("ran 整理 in 考试");
+  });
+
+  it("anytype_run_in_space requires a task", async () => {
+    const runInSpace = vi.fn();
+    const deps = { ...baseDeps(fakeApi(), false), console: { workspaceRoot: "/tmp/ws", runInSpace } };
+    const t = createAnytypeTools(deps).find((x) => x.name === "anytype_run_in_space")!;
+    const text = ((await t.execute("id", { space: "x" })).content[0] as { text: string }).text;
+    expect(runInSpace).not.toHaveBeenCalled();
+    expect(text).toMatch(/task/);
+  });
 });
 
 describe("collectMemories", () => {
