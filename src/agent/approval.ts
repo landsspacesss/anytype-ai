@@ -30,7 +30,6 @@ export const SAFE_TOOLS: ReadonlySet<string> = new Set([
   "anytype_templates",
   "web_search",
   "web_fetch",
-  "anytype_watch",
 ]);
 
 /**
