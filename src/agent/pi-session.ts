@@ -187,6 +187,33 @@ export function ensureModelsConfig(agentDir: string, srcPath: string = MODELS_SR
   }
 }
 
+/** Where the baked-in skills live in the image. */
+const SKILLS_SRC = "/app/skills";
+
+/**
+ * Copy the baked-in pi skills (docker/skills/<name>/SKILL.md) into pi's agent
+ * dir. Like models.json, the agent dir is a volume mount, so a baked-in dir
+ * there would be shadowed — we copy it in at startup. Existing skills are left
+ * alone (never clobber a user's local edits).
+ */
+export function ensureSkillsConfig(agentDir: string, srcRoot: string = SKILLS_SRC): void {
+  try {
+    if (!fs.existsSync(srcRoot)) return;
+    const destRoot = path.join(agentDir, "skills");
+    for (const name of fs.readdirSync(srcRoot)) {
+      const src = path.join(srcRoot, name, "SKILL.md");
+      const dest = path.join(destRoot, name, "SKILL.md");
+      if (fs.existsSync(src) && !fs.existsSync(dest)) {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        console.log(`wrote skill: ${dest}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`ensureSkillsConfig failed: ${String(err)}`);
+  }
+}
+
 /** Find a model by id, preferring the deepseek provider. */
 function resolveModel(registry: ModelRegistry, modelId: string): unknown | undefined {
   const all = (registry as unknown as { getAll?: () => Array<{ id: string; provider?: string }> }).getAll?.() ?? [];

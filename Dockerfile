@@ -75,6 +75,10 @@ COPY proto ./proto
 # agent dir is a volume mount that would otherwise shadow a baked-in file.
 COPY docker/models.json /app/pi/models.json
 
+# Baked-in pi skills (docker/skills/<name>/SKILL.md) — copied into the agent
+# dir's skills/ at startup by ensureSkillsConfig (same volume-mount reason).
+COPY docker/skills /app/skills
+
 # Writable dirs: /workspace holds the per-space agent workspace volume;
 # /root/.pi/agent is pi's global config/auth dir (never baked credentials in).
 RUN mkdir -p /workspace /root/.pi/agent

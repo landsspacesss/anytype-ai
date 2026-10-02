@@ -122,12 +122,16 @@ function blockToMarkdown(block: Record<string, unknown>): string {
     case "image": {
       const label = typeof block.name === "string" && block.name.length > 0 ? block.name : "image";
       const oid = typeof block.object_id === "string" ? block.object_id : "";
-      return `![${label}](${oid})`;
+      // The block id lets a later `anytype_update_block {block_id}` retarget
+      // this image (e.g. repoint it after fixing EXIF orientation).
+      const bid = typeof block.id === "string" ? block.id : "";
+      return `![${label}](${oid})${bid ? ` [block:${bid}]` : ""}`;
     }
     case "file": {
       const label = typeof block.name === "string" && block.name.length > 0 ? block.name : "file";
       const oid = typeof block.object_id === "string" ? block.object_id : "";
-      return `[${label}](${oid})`;
+      const bid = typeof block.id === "string" ? block.id : "";
+      return `[${label}](${oid})${bid ? ` [block:${bid}]` : ""}`;
     }
     case "paragraph": return text;
     default: return text;
