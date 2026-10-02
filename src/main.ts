@@ -148,6 +148,9 @@ async function main(): Promise<void> {
         // mode set via /yolo survives an idle-reap/rebuild.
         approvalGate: gateFor({ spaceId, chatId }),
         approvalMode: consoleSession ? "readonly" : sessions.getApprovalMode(chatId),
+        // Console lock (unlocked by /yolo auto): gates whether the console can
+        // dispatch workers. Ignored by normal sessions.
+        consoleUnlocked: sessions.getConsoleUnlocked(chatId),
       });
     },
   });
