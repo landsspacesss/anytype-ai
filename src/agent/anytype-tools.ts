@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -132,6 +134,7 @@ const GUIDELINES = [
   "You are an AI assistant living INSIDE an Anytype space. The user's notes, pages, and objects live in Anytype — not on the local filesystem.",
   "For ANYTHING about the user's notes, pages, objects, or other content (including questions like \"how many notes are there?\" or \"find my note about X\"), ALWAYS use the `anytype_*` tools instead of listing/reading local workspace files.",
   "Never assume the words \"notes\" or \"笔记\" refer to local files — in this environment they mean Anytype objects in the current space.",
+  "For pages that are scans/photos (试卷, receipts, screenshots): read the downscaled overview first, then use `anytype_download_images` + `crop_image` to zoom into a region. Cropping a small region at full resolution is how you read small or handwritten detail.",
 ];
 
 /**
@@ -139,8 +142,17 @@ const GUIDELINES = [
  * Results are returned as text content; failures are surfaced to the model as
  * text (never thrown out of `execute`) so it can adapt.
  */
-export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }): ToolDefinition[] {
-  const { api, spaceId } = deps;
+export function createAnytypeTools(deps: {
+  api: AnytypeClient;
+  spaceId: string;
+  /** Directory the agent may write downloaded images into. */
+  workspaceDir: string;
+}): ToolDefinition[] {
+  const { api, spaceId, workspaceDir } = deps;
+
+  /** Where a page's downloaded images live. */
+  const imagesDirFor = (objectId: string): string =>
+    path.join(workspaceDir, "images", objectId.slice(0, 24));
 
   const listObjects = defineTool({
     name: "anytype_list_objects",
@@ -245,5 +257,108 @@ export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }
     },
   });
 
-  return [listObjects, search, readObject, createNote] as ToolDefinition[];
+  const downloadImages = defineTool({
+    name: "anytype_download_images",
+    label: "Download a page's images",
+    description:
+      "Download every image on an Anytype object to the local workspace and return their file paths and pixel dimensions. Use this to get full-resolution images you can then zoom into with `crop_image` (and `read` them like any other local file).",
+    promptSnippet: "anytype_download_images — save a page's images locally (paths + dimensions)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The Anytype object id whose images to download." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const doc = await api.getObjectRaw(spaceId, params.id);
+        const images = extractImages(doc);
+        if (images.length === 0) return textResult("That object has no images.");
+        const dir = imagesDirFor(params.id);
+        fs.mkdirSync(dir, { recursive: true });
+        const out: string[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          try {
+            const { data, mimeType } = await api.downloadFileContent(spaceId, img.objectId);
+            const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+            const file = path.join(dir, `${i}.${ext}`);
+            fs.writeFileSync(file, data);
+            const meta = await sharp(data).metadata();
+            out.push(`${i}. ${file} (${meta.width}×${meta.height})`);
+          } catch (err) {
+            out.push(`${i}. (download failed: ${errMessage(err)})`);
+          }
+        }
+        return textResult(`Downloaded ${images.length} image(s):\n${out.join("\n")}`);
+      } catch (err) {
+        return textResult(`anytype_download_images failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const cropImage = defineTool({
+    name: "crop_image",
+    label: "View / crop a local image",
+    description:
+      "View a locally downloaded image, optionally cropping a region to see detail at higher resolution. Coordinates are fractions of the image (0..1): x,y = top-left corner, width,height = size. Omit all four to view the whole image. Cropping a small region is the best way to read small or handwritten text.",
+    promptSnippet: "crop_image — view (or zoom into a region of) a downloaded image by path",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      path: Type.String({ description: "Path to an image (e.g. from anytype_download_images)." }),
+      x: Type.Optional(Type.Number({ description: "Left edge as a fraction 0..1 (default 0)." })),
+      y: Type.Optional(Type.Number({ description: "Top edge as a fraction 0..1 (default 0)." })),
+      width: Type.Optional(Type.Number({ description: "Width as a fraction 0..1 (default 1)." })),
+      height: Type.Optional(Type.Number({ description: "Height as a fraction 0..1 (default 1)." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        // Only allow reading files inside the agent workspace.
+        const resolved = path.resolve(params.path);
+        const root = path.resolve(workspaceDir);
+        if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+          return textResult(`crop_image refused: path must be inside ${root}`);
+        }
+        if (!fs.existsSync(resolved)) return textResult(`crop_image: no such file: ${resolved}`);
+        const buf = fs.readFileSync(resolved);
+        const meta = await sharp(buf).metadata();
+        const W = meta.width ?? 0;
+        const H = meta.height ?? 0;
+        if (!W || !H) return textResult("crop_image: not a readable image.");
+
+        const hasCrop =
+          params.x !== undefined || params.y !== undefined ||
+          params.width !== undefined || params.height !== undefined;
+        let pipeline = sharp(buf).rotate();
+        if (hasCrop) {
+          const clamp = (v: number | undefined, dflt: number): number =>
+            Math.max(0, Math.min(1, v ?? dflt));
+          const fx = clamp(params.x, 0);
+          const fy = clamp(params.y, 0);
+          const fw = clamp(params.width, 1);
+          const fh = clamp(params.height, 1);
+          const left = Math.round(fx * W);
+          const top = Math.round(fy * H);
+          const width = Math.max(1, Math.min(W - left, Math.round(fw * W)));
+          const height = Math.max(1, Math.min(H - top, Math.round(fh * H)));
+          pipeline = pipeline.extract({ left, top, width, height });
+        }
+        // Fit the (cropped) region into 1600px; don't enlarge a small crop.
+        const out = await pipeline
+          .resize({ width: MAX_IMAGE_EDGE, height: MAX_IMAGE_EDGE, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 88 })
+          .toBuffer();
+        const label = hasCrop ? "cropped region" : "full image";
+        return {
+          content: [
+            { type: "text", text: `${label} of ${path.basename(resolved)} (${W}×${H} source)` },
+            { type: "image", data: out.toString("base64"), mimeType: "image/jpeg" },
+          ],
+          details: {},
+        };
+      } catch (err) {
+        return textResult(`crop_image failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  return [listObjects, search, readObject, downloadImages, cropImage, createNote] as ToolDefinition[];
 }

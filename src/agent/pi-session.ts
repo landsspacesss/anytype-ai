@@ -74,7 +74,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     authStorage,
     modelRegistry,
     sessionManager: SessionManager.inMemory(),
-    customTools: createAnytypeTools({ api: opts.api, spaceId: opts.spaceId }),
+    customTools: createAnytypeTools({ api: opts.api, spaceId: opts.spaceId, workspaceDir: opts.cwd }),
     ...(model ? { model: model as never } : {}),
   });
 

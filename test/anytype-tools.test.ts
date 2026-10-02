@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import sharp from "sharp";
 import { createAnytypeTools } from "../src/agent/anytype-tools.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
+
+/** A throwaway workspace dir for tool tests. */
+function tmpWorkspace(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "anytype-tools-"));
+}
 
 type ExecResult = { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details: unknown };
 
@@ -39,20 +48,26 @@ async function run(tool: { execute: (...a: unknown[]) => unknown }, params: unkn
 
 const SPACE = "pqdthe";
 
+function mkTools(api: AnytypeClient) {
+  return createAnytypeTools({ api, spaceId: SPACE, workspaceDir: tmpWorkspace() });
+}
+
 describe("createAnytypeTools", () => {
-  it("returns the four Anytype tools with expected names", () => {
-    const tools = createAnytypeTools({ api: fakeApi(), spaceId: SPACE });
-    expect(tools).toHaveLength(4);
+  it("returns the six Anytype tools with expected names", () => {
+    const tools = mkTools(fakeApi());
+    expect(tools).toHaveLength(6);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
       "anytype_read_object",
+      "anytype_download_images",
+      "crop_image",
       "anytype_create_note",
     ]);
   });
 
   it("every tool carries a description, promptSnippet, and identity guidelines", () => {
-    const tools = createAnytypeTools({ api: fakeApi(), spaceId: SPACE });
+    const tools = mkTools(fakeApi());
     for (const t of tools) {
       expect(t.description.length).toBeGreaterThan(0);
       expect(typeof t.promptSnippet).toBe("string");
@@ -62,7 +77,7 @@ describe("createAnytypeTools", () => {
 
   it("anytype_list_objects calls listObjects(spaceId) and lists name/type/id", async () => {
     const api = fakeApi();
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_list_objects"), {});
     expect(api.listObjects).toHaveBeenCalledWith(SPACE);
     const text = res.content[0].text;
@@ -75,7 +90,7 @@ describe("createAnytypeTools", () => {
 
   it("anytype_list_objects honors an optional limit", async () => {
     const api = fakeApi();
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_list_objects"), { limit: 1 });
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
@@ -94,7 +109,7 @@ describe("createAnytypeTools", () => {
         { id: "c1", name: "ai-bot-test", type: "chat_derived" },
       ]),
     });
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const listed = await run(toolByName(tools, "anytype_list_objects"), {});
     expect(listed.content[0].text).toContain("日常试卷1");
     expect(listed.content[0].text).not.toContain("ai-bot-test");
@@ -106,7 +121,7 @@ describe("createAnytypeTools", () => {
 
   it("anytype_search calls search(spaceId, query) and shows matches", async () => {
     const api = fakeApi();
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_search"), { query: "日常" });
     expect(api.search).toHaveBeenCalledWith(SPACE, "日常");
     const text = res.content[0].text;
@@ -117,7 +132,7 @@ describe("createAnytypeTools", () => {
 
   it("anytype_read_object renders the title and block text", async () => {
     const api = fakeApi();
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_read_object"), { id: "obj1" });
     expect(api.getObjectRaw).toHaveBeenCalledWith(SPACE, "obj1");
     const text = res.content[0].text;
@@ -128,7 +143,7 @@ describe("createAnytypeTools", () => {
 
   it("anytype_create_note passes name/markdown through and returns the new id", async () => {
     const api = fakeApi();
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_create_note"), { name: "新笔记", markdown: "# 标题" });
     expect(api.createObject).toHaveBeenCalledWith(SPACE, { name: "新笔记", markdown: "# 标题" });
     expect(res.content[0].text).toContain("new-123");
@@ -140,7 +155,7 @@ describe("createAnytypeTools", () => {
         throw new Error("listObjects failed: 500");
       }),
     });
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_list_objects"), {});
     expect(res.content[0].text).toContain("failed");
     expect(res.content[0].text).toContain("500");
@@ -153,7 +168,7 @@ describe("createAnytypeTools", () => {
         blocks: [{ type: "image" }, { type: "image" }, { type: "image" }, { type: "image" }],
       })),
     });
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
@@ -174,7 +189,7 @@ describe("createAnytypeTools", () => {
       })),
       downloadFileContent: vi.fn(async () => ({ data: png, mimeType: "image/png" })),
     });
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_read_object"), { id: "obj1" });
     expect(api.downloadFileContent).toHaveBeenCalledWith(SPACE, "file-1");
     const img = res.content.find((c) => c.type === "image");
@@ -185,11 +200,53 @@ describe("createAnytypeTools", () => {
     expect((img?.data ?? "").length).toBeLessThan(png.length);
   });
 
+  it("anytype_download_images saves images to the workspace and reports path + dimensions", async () => {
+    const png = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .png()
+      .toBuffer();
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        blocks: [{ type: "image", object_id: "f1", mime_type: "image/png", name: "a.png" }],
+      })),
+      downloadFileContent: vi.fn(async () => ({ data: png, mimeType: "image/png" })),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_download_images"), { id: "obj1" });
+    const text = res.content[0].text;
+    expect(text).toContain("1 image");
+    expect(text).toContain("800×600");
+    const m = text.match(/(\S+\.png)/);
+    expect(m).toBeTruthy();
+    if (m) expect(fs.existsSync(m[1])).toBe(true);
+  });
+
+  it("crop_image returns image content for a region and refuses paths outside the workspace", async () => {
+    const png = await sharp({
+      create: { width: 1000, height: 800, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    })
+      .png()
+      .toBuffer();
+    const ws = tmpWorkspace();
+    const file = path.join(ws, "img.png");
+    fs.writeFileSync(file, png);
+    const tools = createAnytypeTools({ api: fakeApi(), spaceId: SPACE, workspaceDir: ws });
+
+    const cropped = await run(toolByName(tools, "crop_image"), { path: file, x: 0, y: 0, width: 0.5, height: 0.5 });
+    const img = cropped.content.find((c) => c.type === "image");
+    expect(img?.mimeType).toBe("image/jpeg");
+    expect((img?.data ?? "").length).toBeGreaterThan(0);
+
+    const refused = await run(toolByName(tools, "crop_image"), { path: "/etc/passwd" });
+    expect(refused.content[0].text).toMatch(/refused|no such file/i);
+  });
+
   it("tolerates malformed objects/blocks when reading", async () => {
     const api = fakeApi({
       getObjectRaw: vi.fn(async () => ({ blocks: [null, 42, { text: 7 }, { text: "ok" }] })),
     });
-    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
     const text = res.content[0].text;
     expect(text).toContain("(untitled)");
