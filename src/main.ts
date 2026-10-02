@@ -239,9 +239,32 @@ async function main(): Promise<void> {
       store: watchStore,
       api,
       maxMisses: cfg.watchMaxMisses,
+      // A watch may carry a user-defined `prompt`. When it does, a change runs
+      // an agent turn in that watch's chat (the agent reads the object itself
+      // and follows the instruction), then posts the reply. Without a prompt we
+      // keep the old behavior: post the raw diff summary.
       notify: async (rec, text) => {
-        console.log(`watch change: '${rec.label}' -> notifying chat ${rec.chatId}`);
-        await api.sendMessage(rec.spaceId, rec.chatId, text, `watch-${rec.objectId}-${Date.now()}`);
+        const prompt = rec.prompt?.trim();
+        console.log(`watch fire: '${rec.label}' (prompt? ${prompt ? "yes" : "no"}) -> chat ${rec.chatId}`);
+        const key = `watch-${rec.objectId}-${Date.now()}`;
+        if (prompt) {
+          try {
+            const trigger =
+              `（定时检查：你订阅的对象「${rec.label}」发生了变化。${text}\n` +
+              `请按用户要求处理：${prompt}\n` +
+              `可先用 anytype_read_object 读取对象 ${rec.objectId} 了解最新内容。）`;
+            const reply = await sessions.run(rec.chatId, trigger);
+            if (reply.trim()) {
+              await api.sendMessage(rec.spaceId, rec.chatId, reply, key);
+            } else {
+              console.warn(`watch agent run for '${rec.label}' produced an empty reply`);
+            }
+          } catch (err) {
+            console.warn(`watch agent run failed for '${rec.label}': ${String(err)}`);
+          }
+        } else {
+          await api.sendMessage(rec.spaceId, rec.chatId, text, key);
+        }
       },
     })
       .catch((err) => console.warn(`watch poll failed: ${String(err)}`))

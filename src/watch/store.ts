@@ -23,6 +23,12 @@ export interface WatchRecord {
   label: string;
   snapshot: BlockSnap[];
   cron: string;
+  /**
+   * Optional instruction for the AI to run when this object changes (e.g.
+   * "总结这篇文章的变化"). When set, a change triggers an agent turn in the
+   * watch's chat instead of just posting the raw diff.
+   */
+  prompt?: string;
   lastFiredMinute?: string;
   /**
    * Consecutive "object not found (404)" observations. Only after this reaches
@@ -131,6 +137,7 @@ export class WatchStore {
         };
         if (typeof rec.lastFiredMinute === "string") record.lastFiredMinute = rec.lastFiredMinute;
         if (typeof rec.misses === "number" && rec.misses > 0) record.misses = rec.misses;
+        if (typeof rec.prompt === "string" && rec.prompt.trim().length > 0) record.prompt = rec.prompt.trim();
         this.records.set(this.key(rec.spaceId, rec.objectId), record);
       }
     } catch {

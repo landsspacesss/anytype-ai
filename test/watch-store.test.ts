@@ -106,6 +106,38 @@ describe("WatchStore", () => {
     expect(got?.lastFiredMinute).toBe("2026-10-02T09:00");
   });
 
+  it("round-trips a per-watch prompt through save/load", () => {
+    const file = tmpFile();
+    const a = new WatchStore(file);
+    a.load();
+    a.upsert(rec({ prompt: "总结这篇文章的变化" }));
+    a.save();
+
+    const b = new WatchStore(file);
+    b.load();
+    expect(b.get("sp1", "obj1")?.prompt).toBe("总结这篇文章的变化");
+  });
+
+  it("omits an absent or blank prompt when loading", () => {
+    const file = tmpFile();
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        watches: [
+          { objectId: "no-prompt", spaceId: "sp1", chatId: "chat1", label: "A", snapshot: [] },
+          { objectId: "blank", spaceId: "sp1", chatId: "chat1", label: "B", snapshot: [], prompt: "   " },
+          { objectId: "kept", spaceId: "sp1", chatId: "chat1", label: "C", snapshot: [], prompt: "检查待办" },
+        ],
+      }),
+      "utf-8",
+    );
+    const store = new WatchStore(file);
+    store.load();
+    expect(store.get("sp1", "no-prompt")?.prompt).toBeUndefined();
+    expect(store.get("sp1", "blank")?.prompt).toBeUndefined();
+    expect(store.get("sp1", "kept")?.prompt).toBe("检查待办");
+  });
+
   it("defaults cron for legacy records and tolerates a custom default", () => {
     const file = tmpFile();
     fs.writeFileSync(

@@ -739,6 +739,33 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("工作日 09:00");
   });
 
+  it("anytype_watch add stores a custom prompt and mentions it in the reply", async () => {
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      prompt: "总结这篇文章的变化",
+    });
+    expect((store.upsert.mock.calls[0][0] as WatchRecord).prompt).toBe("总结这篇文章的变化");
+    expect(res.content[0].text).toContain("总结这篇文章的变化");
+  });
+
+  it("anytype_watch add omits a blank prompt", async () => {
+    const store = fakeStore();
+    await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      prompt: "   ",
+    });
+    expect((store.upsert.mock.calls[0][0] as WatchRecord).prompt).toBeUndefined();
+  });
+
+  it("anytype_watch add with no prompt keeps the record prompt-free", async () => {
+    const store = fakeStore();
+    await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), { action: "add", id: "obj1" });
+    expect("prompt" in (store.upsert.mock.calls[0][0] as WatchRecord)).toBe(false);
+  });
+
   it("anytype_watch add rejects an invalid cron", async () => {
     const store = fakeStore();
     const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
@@ -773,7 +800,76 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("每天 09:00");
   });
 
-  it("anytype_watch schedule requires id and cron and rejects invalid cron", async () => {
+  it("anytype_watch schedule updates the prompt without touching cron", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [],
+      cron: DEFAULT_CRON,
+      lastFiredMinute: "2026-10-02T09:00",
+    };
+    store.get = vi.fn(() => record);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+      prompt: "检查未完成待办并提醒我",
+    });
+    expect(record.prompt).toBe("检查未完成待办并提醒我");
+    expect(record.cron).toBe(DEFAULT_CRON);
+    expect(record.lastFiredMinute).toBe("2026-10-02T09:00"); // untouched: no cron change
+    expect(store.save).toHaveBeenCalled();
+    expect(res.content[0].text).toContain("检查未完成待办并提醒我");
+  });
+
+  it("anytype_watch schedule updates cron and prompt together", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [],
+      cron: DEFAULT_CRON,
+    };
+    store.get = vi.fn(() => record);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+      cron: "0 9 * * *",
+      prompt: "总结变化",
+    });
+    expect(record.cron).toBe("0 9 * * *");
+    expect(record.prompt).toBe("总结变化");
+    const text = res.content[0].text;
+    expect(text).toContain("每天 09:00");
+    expect(text).toContain("总结变化");
+  });
+
+  it("anytype_watch schedule clears the prompt with a blank value", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [],
+      cron: DEFAULT_CRON,
+      prompt: "旧的指令",
+    };
+    store.get = vi.fn(() => record);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+      prompt: "  ",
+    });
+    expect(record.prompt).toBeUndefined();
+    expect(res.content[0].text).toContain("已清除变化指令");
+  });
+
+  it("anytype_watch schedule requires id and at least one of cron/prompt, and rejects invalid cron", async () => {
     const store = fakeStore();
     const noId = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
       action: "schedule",
@@ -812,8 +908,11 @@ describe("createAnytypeTools", () => {
       action: "check",
       id: "obj1",
     });
-    expect(api.sendMessage).toHaveBeenCalled();
-    expect(res.content[0].text).toContain("内容有更新");
+    // `check` is synchronous: it must NOT post via the dispatcher/sendMessage.
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    const text = res.content[0].text;
+    expect(text).toContain("内容有更新");
+    expect(text).toContain("订阅的对象"); // the captured diff summary is surfaced
   });
 
   it("anytype_watch check reports no change when the snapshot matches", async () => {
@@ -888,6 +987,21 @@ describe("createAnytypeTools", () => {
     expect(text).toContain("日常试卷1");
     expect(text).toContain("obj1");
     expect(text).toContain("每天 09:00");
+  });
+
+  it("anytype_watch list shows whether a prompt is set (truncated to 30 chars)", async () => {
+    const store = fakeStore();
+    const longPrompt = "请总结这篇长文章的变化，列出所有要点，并标注每条要点的来源段落";
+    store.forSpace = vi.fn(() => [
+      { objectId: "with", spaceId: SPACE, chatId: CHAT, label: "带提示", snapshot: [], cron: "0 9 * * *", prompt: longPrompt },
+      { objectId: "without", spaceId: SPACE, chatId: CHAT, label: "普通订阅", snapshot: [], cron: "0 9 * * *" },
+    ]);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), { action: "list" });
+    const text = res.content[0].text;
+    expect(text).toContain(`指令：${longPrompt.slice(0, 30)}…`);
+    expect(text).not.toContain(`指令：${longPrompt}`);
+    const withoutLine = text.split("\n").find((l) => l.includes("普通订阅")) ?? "";
+    expect(withoutLine).not.toContain("指令");
   });
 
   it("anytype_watch list reports an empty subscription set", async () => {

@@ -5,7 +5,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import sharp from "sharp";
 import type { AnytypeClient } from "../anytype/client.js";
-import type { WatchStore } from "../watch/store.js";
+import type { WatchRecord, WatchStore } from "../watch/store.js";
 import { snapshotOf } from "../watch/store.js";
 import { describeCron, parseCron } from "../watch/cron.js";
 import { pollWatch } from "../watch/poller.js";
@@ -210,6 +210,7 @@ const GUIDELINES = [
   "For pages that are scans/photos (试卷, receipts, screenshots): read the downscaled overview first, then use `anytype_download_images` + `crop_image` to zoom into a region. Cropping a small region at full resolution is how you read small or handwritten detail.",
   "When the user asks to be notified/watched when a note or object changes (e.g. \"订阅\", \"watch\", \"notify me when it changes\"), use `anytype_watch` with action \"add\" and the object id. The bot then polls the object and posts a notification into this chat whenever its content changes.",
   "当用户想定时检查（如'每天/每小时/每天早上9点'）时，用 `anytype_watch` 的 `cron` 参数设置 5 段 cron（分 时 日 月 周）；例如 每天早上9点=`0 9 * * *`，每小时=`0 * * * *`，每30分钟=`*/30 * * * *`。",
+  "`anytype_watch` 的 `prompt` 参数可让 AI 在对象每次变化时执行一条指令（例如『总结这篇文章的变化』『检查未完成待办并提醒我』）：届时 AI 会先读取该对象、再按指令处理，并把结果发到聊天。用户想要摘要/检查/动作而非原始 diff 时，就设置 `prompt`。",
 ];
 
 /**
@@ -838,7 +839,7 @@ export function createAnytypeTools(deps: {
     name: "anytype_watch",
     label: "Subscribe to object changes",
     description:
-      "Subscribe this chat to changes on an Anytype object (a note/page). Each subscription has a cron schedule; the bot checks the object on that schedule (local time) and posts a notification into this chat when its content changes. Actions: \"add\" (with `id`, optional `cron`) to subscribe; \"schedule\" (with `id` and `cron`) to change the schedule of an existing subscription; \"check\" (with `id`) to check it right now; \"remove\" (with `id`) to unsubscribe; \"list\" to show the space's current subscriptions. Subscriptions survive restarts.",
+      "Subscribe this chat to changes on an Anytype object (a note/page). Each subscription has a cron schedule; the bot checks the object on that schedule (local time) and posts a notification into this chat when its content changes. Actions: \"add\" (with `id`, optional `cron`/`prompt`/`label`) to subscribe; \"schedule\" (with `id` and at least one of `cron`/`prompt`) to change the schedule or instruction of an existing subscription; \"check\" (with `id`) to check it right now; \"remove\" (with `id`) to unsubscribe; \"list\" to show the space's current subscriptions. Subscriptions survive restarts.",
     promptSnippet: "anytype_watch — subscribe to (or list/schedule/check/remove) notifications when an object changes",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
@@ -848,7 +849,13 @@ export function createAnytypeTools(deps: {
       cron: Type.Optional(
         Type.String({
           description:
-            "5-field cron schedule (minute hour day-of-month month day-of-week), local time. Examples: 每天早上9点=`0 9 * * *`, 每小时=`0 * * * *`, 每30分钟=`*/30 * * * *`. Required for schedule; optional for add (defaults to the configured default).",
+            "5-field cron schedule (minute hour day-of-month month day-of-week), local time. Examples: 每天早上9点=`0 9 * * *`, 每小时=`0 * * * *`, 每30分钟=`*/30 * * * *`. Required for schedule unless `prompt` is given; optional for add (defaults to the configured default).",
+        }),
+      ),
+      prompt: Type.Optional(
+        Type.String({
+          description:
+            "当对象变化时让 AI 执行的指令，例如『总结这篇文章的变化』；不填则只通知改了哪些地方",
         }),
       ),
     }),
@@ -861,17 +868,21 @@ export function createAnytypeTools(deps: {
           const doc = await api.getObjectRaw(spaceId, params.id);
           const label = params.label ?? objectName(doc);
           const name = label || params.id;
-          store.upsert({
+          const record: WatchRecord = {
             objectId: params.id,
             spaceId,
             chatId,
             label: name,
             snapshot: snapshotOf(doc),
             cron,
-          });
+          };
+          const prompt = params.prompt?.trim();
+          if (prompt) record.prompt = prompt;
+          store.upsert(record);
           store.save();
           onWatchChange?.();
-          return textResult(`已订阅『${name}』，将${describeCron(cron)}检查；可通过 schedule 修改`);
+          const promptNote = prompt ? `，变化时按指令处理：${prompt}` : "";
+          return textResult(`已订阅『${name}』，将${describeCron(cron)}检查${promptNote}；可通过 schedule 修改`);
         }
         if (params.action === "remove") {
           if (!params.id) return textResult("anytype_watch: `id` is required for action \"remove\".");
@@ -885,26 +896,48 @@ export function createAnytypeTools(deps: {
         }
         if (params.action === "schedule") {
           if (!params.id) return textResult("anytype_watch: `id` is required for action \"schedule\".");
-          if (!params.cron) return textResult("anytype_watch: `cron` is required for action \"schedule\".");
-          if (!parseCron(params.cron)) return textResult(`anytype_watch: ${CRON_HELP}`);
+          const hasCron = params.cron !== undefined;
+          const hasPrompt = params.prompt !== undefined;
+          if (!hasCron && !hasPrompt) {
+            return textResult("anytype_watch: 请至少提供 `cron` 或 `prompt` 之一。");
+          }
+          if (hasCron && !parseCron(params.cron as string)) return textResult(`anytype_watch: ${CRON_HELP}`);
           const rec = store.get(spaceId, params.id);
           if (!rec) return textResult(`没有找到该订阅（id ${params.id}）。`);
-          rec.cron = params.cron;
-          rec.lastFiredMinute = undefined;
+          const parts: string[] = [];
+          if (hasCron) {
+            rec.cron = params.cron as string;
+            rec.lastFiredMinute = undefined;
+            parts.push(`检查计划改为${describeCron(params.cron as string)}（${params.cron}）`);
+          }
+          if (hasPrompt) {
+            const prompt = params.prompt?.trim();
+            if (prompt) {
+              rec.prompt = prompt;
+              parts.push(`变化指令改为：${prompt}`);
+            } else {
+              delete rec.prompt;
+              parts.push("已清除变化指令（变化时仅通知差异）");
+            }
+          }
           store.save();
           onWatchChange?.();
-          return textResult(`已将『${rec.label}』的检查计划改为${describeCron(params.cron)}（${params.cron}）。`);
+          return textResult(`已更新『${rec.label}』：${parts.join("；")}。`);
         }
         if (params.action === "check") {
           if (!params.id) return textResult("anytype_watch: `id` is required for action \"check\".");
           const rec = store.get(spaceId, params.id);
           if (!rec) return textResult(`没有找到该订阅（id ${params.id}）。`);
           const before = JSON.stringify(rec.snapshot);
+          // Capture the change summary locally instead of running the watch
+          // dispatcher: `check` is synchronous and must NOT spawn a nested
+          // agent. The agent reports the outcome in its own reply.
+          let summary = "";
           await pollWatch(rec, {
             store,
             api,
-            notify: async (r, text) => {
-              await api.sendMessage(spaceId, chatId, text, `watch-${r.objectId}-${Date.now()}`);
+            notify: async (_r, text) => {
+              summary = text;
             },
           });
           if (!store.get(spaceId, params.id)) {
@@ -913,16 +946,18 @@ export function createAnytypeTools(deps: {
           const changed = JSON.stringify(rec.snapshot) !== before;
           return textResult(
             changed
-              ? `已检查『${rec.label}』：内容有更新，已通知到本聊天。`
+              ? `已检查『${rec.label}』：内容有更新。\n${summary}`
               : `已检查『${rec.label}』：内容没有变化。`,
           );
         }
         if (params.action === "list") {
           const records = store.forSpace(spaceId);
           if (records.length === 0) return textResult("当前没有任何订阅。");
-          const lines = records.map(
-            (r, i) => `${i + 1}. 『${r.label}』 — ${describeCron(r.cron ?? "")} — ${r.objectId}`,
-          );
+          const lines = records.map((r, i) => {
+            const p = r.prompt?.trim();
+            const promptNote = p ? ` · 指令：${p.length > 30 ? `${p.slice(0, 30)}…` : p}` : "";
+            return `${i + 1}. 『${r.label}』 — ${describeCron(r.cron ?? "")} — ${r.objectId}${promptNote}`;
+          });
           return textResult(`${records.length} 个订阅：\n${lines.join("\n")}`);
         }
         return textResult(
