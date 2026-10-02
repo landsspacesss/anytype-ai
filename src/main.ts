@@ -211,7 +211,13 @@ async function main(): Promise<void> {
             defaultModel: cfg.piModel,
             getInterruptPolicy: () => sessions.getInterruptPolicy(e.chatId),
             setInterruptPolicy: (p) => sessions.setInterruptPolicy(e.chatId, p),
-            joinSpace,
+            // /join changes global state (joins a space / rewires the console), so
+            // only allow it from a PRIVATE (2-person) chat — never from a
+            // multi-member shared space, where any member could otherwise make the
+            // bot join an attacker-controlled space or hijack the console.
+            joinSpace: e.isDirect
+              ? joinSpace
+              : async () => ({ ok: false, message: "／join 只能在私聊或控制台（两人空间）里使用。" }),
           };
           const reply = await handleCommand(parsed.command, parsed.args, ctx);
           if (reply && reply.trim().length > 0) {
