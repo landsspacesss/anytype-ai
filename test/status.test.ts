@@ -168,4 +168,19 @@ describe("StatusReporter rotating bubbles", () => {
       expect(send).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
+
+  it("narration edit is not dropped when a tool rotates the bubble in the edit window", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 800 });
+      r.start(T);
+      await vi.advanceTimersByTimeAsync(0);                 // b0 posts (placeholder)
+      r.onProgress({ kind: "narration", text: "先查一下" });
+      await vi.advanceTimersByTimeAsync(100);               // within the edit window
+      r.onProgress({ kind: "tool", tool: "anytype_search", args: {} }); // rotates → b1
+      await vi.advanceTimersByTimeAsync(800);               // edit window fires
+      expect(status.edit).toHaveBeenCalledWith(expect.anything(), expect.any(String), "先查一下");
+    } finally { vi.useRealTimers(); }
+  });
 });

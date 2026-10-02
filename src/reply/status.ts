@@ -109,6 +109,7 @@ interface Bubble {
   id?: string;
   text: string;
   posted: boolean;
+  dirty?: boolean;
 }
 
 /**
@@ -166,10 +167,11 @@ export class StatusReporter {
     if (p.kind === "narration") {
       this.setActiveText(p.text, true);
     } else if (p.kind === "tool") {
-      if (this.activeIsNarration) this.active = undefined; // open a new bubble
+      // Rotate only once live: before the first post there's a single bubble.
+      if (this.started && this.activeIsNarration) this.active = undefined;
       this.setActiveText(formatToolProgress(p.tool, p.args), false);
     } else {
-      if (this.activeIsNarration) this.active = undefined;
+      if (this.started && this.activeIsNarration) this.active = undefined;
       this.setActiveText(STATUS_THINKING, false);
     }
   }
@@ -183,7 +185,10 @@ export class StatusReporter {
       this.active.text = text;
     }
     this.activeIsNarration = narration;
-    if (this.active.posted) this.scheduleEdit();
+    if (this.active.posted) {
+      this.active.dirty = true;
+      this.scheduleEdit();
+    }
   }
 
   private flushPost(): void {
@@ -207,7 +212,11 @@ export class StatusReporter {
       }
       b.id = id;
       b.posted = true;
-      if (b.text !== text) this.scheduleEdit(); // reconcile to the latest text
+      if (b.text !== text) {
+        // The posted text was a placeholder; reconcile to the latest text.
+        b.dirty = true;
+        this.scheduleEdit();
+      }
     } catch (err) {
       this.disabled = true;
       this.warn(`status post failed: ${String(err)}`);
@@ -228,14 +237,17 @@ export class StatusReporter {
   }
 
   private async flushEdit(): Promise<void> {
-    const b = this.active;
-    if (this.disabled || this.stopped || !b || !b.posted || b.id === undefined || !this.target) {
-      return;
-    }
-    try {
-      await this.opts.status.edit(this.target, b.id, b.text);
-    } catch (err) {
-      this.warn(`status edit failed: ${String(err)}`);
+    if (this.disabled || this.stopped || !this.target) return;
+    // Edit EVERY dirty posted bubble: the rotation may have moved `active` past
+    // a bubble that still has a pending narration edit.
+    const targets = this.bubbles.filter((b) => b.posted && b.dirty && b.id !== undefined);
+    for (const b of targets) {
+      b.dirty = false;
+      try {
+        await this.opts.status.edit(this.target, b.id!, b.text);
+      } catch (err) {
+        this.warn(`status edit failed: ${String(err)}`);
+      }
     }
   }
 
