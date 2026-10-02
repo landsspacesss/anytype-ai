@@ -165,7 +165,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 
 > **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
 >
-> **订阅按 cron 计划检查**——每个订阅有自己的 5 段 cron（分 时 日 月 周，**本地时区**），调度器每 `WATCH_TICK_MS`（默认 60 秒）tick 一次，只检查当前分钟命中的订阅。因为是 Anytype **没有对象变更事件流**，所以仍是「到点拉取 + diff」。新订阅默认 `WATCH_DEFAULT_CRON`（`*/30 * * * *`）。订阅记录存在 `/workspace/watches.json`，重启不丢。
+> **订阅按 cron 计划检查**——每个订阅有自己的 5 段 cron（分 时 日 月 周，**本地时区**），调度器每 `WATCH_TICK_MS`（默认 60 秒）tick 一次，只检查当前分钟命中的订阅。因为是 Anytype **没有对象变更事件流**，所以仍是「到点拉取 + diff」。新订阅默认 `WATCH_DEFAULT_CRON`（`*/30 * * * *`）。订阅记录存在 `/workspace/watches.json`，重启不丢。**取不到订阅对象时不会贸然退订**——先调对象列表确认是否真的没了，只有连续 `WATCH_MAX_MISSES`（默认 3）次确认不在列表里才退订；纯网络抖动会保留订阅。
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
 
