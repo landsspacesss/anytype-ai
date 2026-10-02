@@ -26,8 +26,8 @@ export interface CommandContext {
    * human-readable result message.
    */
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
-  /** Run (or resume) a workflow. `args` are `k=v` pairs; `resume` continues a run. */
-  runWorkflow(name: string, args: string, resume: boolean): Promise<{ ok: boolean; message: string }>;
+  /** Run a workflow. `args` are `k=v` pairs; when `resumeRunId` is set, continue that run. */
+  runWorkflow(name: string, args: string, resumeRunId?: string): Promise<{ ok: boolean; message: string }>;
   /** Recent workflow runs (newest first). */
   listRuns(): { id: string; name: string; status: string; when: string }[];
   /** True when this chat is the global console space (always read-only). */
@@ -227,10 +227,17 @@ export async function handleCommand(
     case "run": {
       if (!args) return "用法：/run <工作流名> [k=v …]（/run <名> --resume <runId> 续跑；/runs 看历史）";
       const resumeMatch = args.match(/\s--resume\s+(\S+)/);
-      const resume = resumeMatch !== null;
+      if (!resumeMatch && /\s--resume(\s|$)/.test(args)) {
+        return "用法：/run <名> --resume <runId>（--resume 后面需要 runId）";
+      }
+      const resumeRunId = resumeMatch ? resumeMatch[1] : undefined;
       const name = args.split(/\s+/)[0];
-      const rest = args.replace(/^\S+\s*/, "").replace(/--resume\s+\S+/, "").trim();
-      const r = await ctx.runWorkflow(name, rest, resume);
+      const rest = args
+        .replace(/^\S+\s*/, "")
+        .replace(/--resume\s+\S+/, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const r = await ctx.runWorkflow(name, rest, resumeRunId);
       return r.message;
     }
     case "runs": {

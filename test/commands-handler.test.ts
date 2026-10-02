@@ -329,13 +329,27 @@ describe("handleCommand", () => {
   it("/run <name> delegates to ctx.runWorkflow", async () => {
     const { context, runWorkflow } = ctx(fakeClient());
     const reply = await handleCommand("run", "demo", context);
-    expect(runWorkflow).toHaveBeenCalledWith("demo", "", false);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "", undefined);
     expect(reply).toContain("started");
   });
-  it("/run <name> --resume <id> sets resume", async () => {
+  it("/run <name> --resume <id> threads the runId", async () => {
     const { context, runWorkflow } = ctx(fakeClient());
     await handleCommand("run", "demo --resume r9", context);
-    expect(runWorkflow).toHaveBeenCalledWith("demo", "", true);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "", "r9");
+  });
+  it("/run <name> passes k=v args", async () => {
+    const { context, runWorkflow } = ctx(fakeClient());
+    await handleCommand("run", "demo a=b", context);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "a=b", undefined);
+  });
+  it("/run <name> k=v --resume <id> threads args and runId", async () => {
+    const { context, runWorkflow } = ctx(fakeClient());
+    await handleCommand("run", "demo a=b --resume r9 c=d", context);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "a=b c=d", "r9");
+  });
+  it("/run --resume with no id shows usage", async () => {
+    const { context } = ctx(fakeClient());
+    expect(await handleCommand("run", "demo --resume", context)).toMatch(/用法/);
   });
   it("/run with no arg shows usage", async () => {
     const { context } = ctx(fakeClient());
