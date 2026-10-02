@@ -164,6 +164,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_templates` | 模板**列/建/删**（`action: list/create/delete`）；`anytype_create_note` 可带 `template_id` 套用 |
 | `anytype_send_message` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / 加 emoji 反应 / 改 / 删消息 |
 | `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
+| `web_search` | **联网搜索**当前信息（走 DeepSeek 托管的 Anthropic `web_search`，**同一个 key**；返回答案+来源链接）|
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
 
 > **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
