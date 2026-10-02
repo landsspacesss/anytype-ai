@@ -85,7 +85,7 @@ Anytype **没有"全局空间"**——成员是**逐空间**的。所以每个�
    ```bash
    docker exec anytype-anytype-cli-1 anytype space list
    ```
-5. **重启 bot** 让它发现新空间：`aibot restart ai-bot`
+5. **无需重启**：bot 每 60 秒重新扫描一次空间/聊天，会自动发现新加入的空间和新建立的聊天并订阅（日志里会打印 `subscribed …` / `discovery: N chat(s)`）。想立即生效可 `aibot restart ai-bot`。
 
 > API key 是 `--all-spaces` 的，覆盖 bot 所在的**所有**空间（含以后加入的），**不用改 key**。
 >
@@ -116,6 +116,8 @@ DEEPSEEK_API_KEY=sk-...      # 当前用的
 |---|---|
 | `/workspace/<spaceId>/AGENTS.md` | **给 AI 的指令**：告诉它"你是 Anytype 里的助手"、要主动记笔记、怎么用工具。pi 启动时会自动加载。 |
 | `/workspace/<spaceId>/MEMORY.md` | **AI 自己写的长期笔记**（"记住X"→ 写这里；下次对话先读它）。 |
+
+**作用域**：工作区目录按 **space** 分（`/workspace/<spaceId>/`），所以**同一空间里的多个聊天共享同一份记忆**——在聊天 A 说"记住X"，聊天 B 也能读到。但**对话上下文是按聊天隔离**的（每个聊天一条独立对话线，互不串）。
 
 查看某空间的记忆：
 ```bash
