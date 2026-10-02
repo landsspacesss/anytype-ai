@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SessionManager } from "../src/session/manager.js";
+import type { ApprovalMode } from "../src/agent/approval.js";
 
 function fakeClient(replyFn: (m: string) => string) {
   let busy = false;
@@ -242,5 +243,24 @@ describe("SessionManager", () => {
     await mgr.reset("c1");
     await mgr.ensure("c1");
     expect(setPolicy).toHaveBeenLastCalledWith("immediate");
+  });
+
+  it("remembers approval mode per chat and applies it to a live client", async () => {
+    const setMode = vi.fn((m: ApprovalMode) => m);
+    const approve = vi.fn(() => true);
+    const createClient = vi.fn(async () => ({
+      get busy() { return false; },
+      async prompt() { return "ok"; },
+      async close() {}, async abort() {},
+      setApprovalMode: setMode, getApprovalMode: () => "auto" as ApprovalMode, approvePending: approve,
+    }));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000, defaultApprovalMode: "ask" });
+    expect(mgr.getApprovalMode("c1")).toBe("ask"); // default before a client exists
+    await mgr.ensure("c1");
+    expect(setMode).toHaveBeenCalledWith("ask");   // adopted at creation
+    expect(mgr.setApprovalMode("c1", "readonly")).toBe("readonly");
+    expect(setMode).toHaveBeenLastCalledWith("readonly");
+    expect(mgr.approvePending("c1", "all")).toBe(true);
+    expect(approve).toHaveBeenCalledWith("all");
   });
 });

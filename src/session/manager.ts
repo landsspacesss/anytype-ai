@@ -88,6 +88,8 @@ export interface SessionManagerOptions {
   now?: () => number;
   /** Policy applied to chats that never had one set. Default `step`. */
   defaultInterruptPolicy?: InterruptPolicy;
+  /** Approval mode applied to chats that never had one set. Default `auto`. */
+  defaultApprovalMode?: ApprovalMode;
   /**
    * Called by `reset(chatId)` to drop any persisted history for that chat
    * (e.g. delete the chat's session JSONL). Optional: without it, `reset` still
@@ -105,6 +107,8 @@ export class SessionManager {
   private freshChats = new Set<string>();
   // Per-chat interrupt policy, remembered across client rebuilds.
   private policies = new Map<string, InterruptPolicy>();
+  // Per-chat approval mode, remembered across client rebuilds.
+  private approvalModes = new Map<string, ApprovalMode>();
 
   constructor(private opts: SessionManagerOptions) {
     this.now = opts.now ?? Date.now;
@@ -142,6 +146,29 @@ export class SessionManager {
       await e.client.requestInterrupt?.().catch(() => undefined);
     }
     return policy;
+  }
+
+  /** The approval mode for a chat (falls back to the live client, then default). */
+  getApprovalMode(chatId: string): ApprovalMode {
+    return (
+      this.approvalModes.get(chatId) ??
+      this.entries.get(chatId)?.client.getApprovalMode?.() ??
+      this.opts.defaultApprovalMode ??
+      "auto"
+    );
+  }
+
+  /** Set a chat's approval mode; takes effect immediately, returns the applied mode. */
+  setApprovalMode(chatId: string, mode: ApprovalMode): ApprovalMode {
+    this.approvalModes.set(chatId, mode);
+    const e = this.entries.get(chatId);
+    if (!e) return mode;
+    return e.client.setApprovalMode?.(mode) ?? mode;
+  }
+
+  /** Resolve a pending approval from a command. Returns true if one was pending. */
+  approvePending(chatId: string, kind: "approve" | "all" | "deny"): boolean {
+    return this.entries.get(chatId)?.client.approvePending?.(kind) ?? false;
   }
 
   private get liveCount(): number { return this.entries.size + this.creating; }
@@ -183,6 +210,7 @@ export class SessionManager {
     }
     this.freshChats.delete(chatId);
     client.setInterruptPolicy?.(this.getInterruptPolicy(chatId));
+    client.setApprovalMode?.(this.getApprovalMode(chatId));
     const existing = this.entries.get(chatId);
     if (existing) {
       // Lost a race: another caller created the entry while we awaited.
