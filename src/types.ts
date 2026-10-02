@@ -45,6 +45,12 @@ export interface Config {
   searchApiKey: string;
   /** Model for the `web_search` tool (env SEARCH_MODEL). Defaults to piModel. */
   searchModel: string;
+  /** Lightpanda binary backing the `web_fetch` tool (env LIGHTPANDA_BIN). Default "lightpanda". */
+  webFetchBin: string;
+  /** Timeout (ms) for a `web_fetch` run (env WEB_FETCH_TIMEOUT_MS). Default 30000. */
+  webFetchTimeoutMs: number;
+  /** Max characters returned by `web_fetch` (env WEB_FETCH_MAX_CHARS). Default 20000. */
+  webFetchMaxChars: number;
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;

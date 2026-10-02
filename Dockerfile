@@ -31,10 +31,34 @@ FROM node:22-bookworm-slim AS runtime
 # Extraction tooling so the agent can read ANY loose file it downloads:
 #   poppler-utils -> pdftotext (PDFs); unzip -> docx/xlsx (zip of XML);
 #   file -> sniff; python3 -> stdlib zipfile/xml fallback. No pip needed.
+# curl fetches the Lightpanda binary below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates bash git \
+      ca-certificates bash git curl \
       poppler-utils unzip file python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Lightpanda — the official JS-capable headless browser backing the `web_fetch`
+# tool. We take the glibc Linux build (this image is Debian bookworm, NOT musl).
+# Release assets are named lightpanda-<arch>-linux (x86_64|aarch64), e.g.
+#   .../releases/download/<ver>/lightpanda-x86_64-linux
+# The direct github.com URL is tried first; when github.com is unreachable from
+# the build network we fall back to the equivalent GitHub API asset endpoint
+# (reachable more broadly), which redirects to the same object.
+ARG LIGHTPANDA_VERSION=0.4.1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture | sed 's/amd64/x86_64/; s/arm64/aarch64/')"; \
+    asset="lightpanda-${arch}-linux"; \
+    url="https://github.com/lightpanda-io/browser/releases/download/${LIGHTPANDA_VERSION}/${asset}"; \
+    if ! curl -fsSL --connect-timeout 20 --max-time 300 "$url" -o /usr/local/bin/lightpanda; then \
+      api="https://api.github.com/repos/lightpanda-io/browser/releases/tags/${LIGHTPANDA_VERSION}"; \
+      id="$(curl -fsSL --connect-timeout 20 --max-time 60 "$api" \
+        | python3 -c "import sys,json;print([a['id'] for a in json.load(sys.stdin)['assets'] if a['name']=='${asset}'][0])")"; \
+      curl -fsSL --max-time 300 -H 'Accept: application/octet-stream' \
+        "https://api.github.com/repos/lightpanda-io/browser/releases/assets/${id}" \
+        -o /usr/local/bin/lightpanda; \
+    fi; \
+    chmod +x /usr/local/bin/lightpanda; \
+    lightpanda version
 
 # The model provider key is supplied at runtime via `env_file: .env` and is
 # NEVER baked into the image.

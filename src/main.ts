@@ -64,6 +64,9 @@ async function main(): Promise<void> {
         modelId: cfg.piModel,
         searchApiKey: cfg.searchApiKey,
         searchModel: cfg.searchModel,
+        lightpandaBin: cfg.webFetchBin,
+        webFetchTimeoutMs: cfg.webFetchTimeoutMs,
+        webFetchMaxChars: cfg.webFetchMaxChars,
       });
     },
   });

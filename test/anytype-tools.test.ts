@@ -132,9 +132,9 @@ function mkToolsWithSubagent(
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the twenty-seven tools (no subagent) with expected names", () => {
+  it("returns the twenty-eight tools (no subagent) with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(27);
+    expect(tools).toHaveLength(28);
     expect(tools.map((t) => t.name)).not.toContain("subagent");
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
@@ -164,15 +164,16 @@ describe("createAnytypeTools", () => {
       "anytype_templates",
       "anytype_insert_markdown",
       "web_search",
+      "web_fetch",
     ]);
   });
 
-  it("adds a twenty-eighth `subagent` tool when runSubagent is provided", () => {
+  it("adds a twenty-ninth `subagent` tool when runSubagent is provided", () => {
     const tools = mkToolsWithSubagent(fakeApi());
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(29);
     const names = tools.map((t) => t.name);
     expect(names).toContain("subagent");
-    // The subagent tool is appended after the base 27.
+    // The subagent tool is appended after the base 28.
     expect(names[names.length - 1]).toBe("subagent");
   });
 
@@ -1438,5 +1439,62 @@ describe("createAnytypeTools", () => {
     const res = await run(toolByName(tools, "web_search"), { query: "q" });
     expect(res.content[0].text).toContain("web search is not configured");
     expect(searchFn).not.toHaveBeenCalled();
+  });
+
+  // --- web fetch (Lightpanda-backed; uses an injected runFetch) --------------
+
+  function mkToolsWithFetch(
+    runFetch: (opts: { url: string; format?: string; strip?: string }) => Promise<{ text: string }>,
+  ) {
+    return createAnytypeTools({
+      api: fakeApi(),
+      spaceId: SPACE,
+      workspaceDir: tmpWorkspace(),
+      store: fakeStore(),
+      chatId: CHAT,
+      defaultWatchCron: DEFAULT_CRON,
+      searchApiKey: "",
+      runFetch,
+    });
+  }
+
+  it("web_fetch defaults to markdown + strip ui and returns the fetched text", async () => {
+    const runFetch = vi.fn(async () => ({ text: "# Example Domain\n\nThis domain is for use in examples." }));
+    const tools = mkToolsWithFetch(runFetch);
+    const res = await run(toolByName(tools, "web_fetch"), { url: "https://example.com" });
+    expect(runFetch).toHaveBeenCalledWith({ url: "https://example.com", format: "markdown", strip: "ui" });
+    expect(res.content[0].text).toContain("Example Domain");
+    expect(res.details).toEqual({});
+  });
+
+  it("web_fetch maps format text→semantic_tree_text and semantic→semantic_tree", async () => {
+    const runFetch = vi.fn(async () => ({ text: "content" }));
+    const tools = mkToolsWithFetch(runFetch);
+
+    await run(toolByName(tools, "web_fetch"), { url: "https://a.test", format: "text" });
+    expect(runFetch).toHaveBeenLastCalledWith({ url: "https://a.test", format: "semantic_tree_text", strip: "ui" });
+
+    await run(toolByName(tools, "web_fetch"), { url: "https://b.test", format: "semantic" });
+    expect(runFetch).toHaveBeenLastCalledWith({ url: "https://b.test", format: "semantic_tree", strip: "ui" });
+
+    await run(toolByName(tools, "web_fetch"), { url: "https://c.test", format: "html" });
+    expect(runFetch).toHaveBeenLastCalledWith({ url: "https://c.test", format: "html", strip: "ui" });
+  });
+
+  it("web_fetch says so when the fetch returns empty content", async () => {
+    const tools = mkToolsWithFetch(vi.fn(async () => ({ text: "   " })));
+    const res = await run(toolByName(tools, "web_fetch"), { url: "https://empty.test" });
+    expect(res.content[0].text).toMatch(/no content/i);
+  });
+
+  it("web_fetch surfaces a failing runFetch as text instead of throwing", async () => {
+    const tools = mkToolsWithFetch(
+      vi.fn(async () => {
+        throw new Error("lightpanda fetch failed: connection refused");
+      }),
+    );
+    const res = await run(toolByName(tools, "web_fetch"), { url: "https://x.test" });
+    expect(res.content[0].text).toContain("web_fetch failed");
+    expect(res.content[0].text).toContain("connection refused");
   });
 });

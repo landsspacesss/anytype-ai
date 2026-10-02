@@ -33,6 +33,12 @@ export interface PiClientOptions {
   searchApiKey?: string;
   /** Model for the `web_search` tool (env SEARCH_MODEL). Defaults to the search fn's default. */
   searchModel?: string;
+  /** Lightpanda binary backing the `web_fetch` tool (env LIGHTPANDA_BIN). */
+  lightpandaBin?: string;
+  /** Timeout (ms) for a `web_fetch` run (env WEB_FETCH_TIMEOUT_MS). */
+  webFetchTimeoutMs?: number;
+  /** Max characters returned by `web_fetch` (env WEB_FETCH_MAX_CHARS). */
+  webFetchMaxChars?: number;
 }
 
 /** Where the baked-in custom model registry lives in the image. */
@@ -94,6 +100,8 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
         api: opts.api, spaceId: opts.spaceId, workspaceDir: opts.cwd, store: opts.store,
         chatId: opts.chatId, defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
         searchApiKey: opts.searchApiKey ?? "", searchModel: opts.searchModel,
+        lightpandaBin: opts.lightpandaBin, webFetchTimeoutMs: opts.webFetchTimeoutMs,
+        webFetchMaxChars: opts.webFetchMaxChars,
         // NOTE: no runSubagent → the child cannot spawn further sub-agents.
       }),
       ...(model ? { model: model as never } : {}),
@@ -121,6 +129,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
       searchApiKey: opts.searchApiKey ?? "",
       searchModel: opts.searchModel,
+      lightpandaBin: opts.lightpandaBin,
+      webFetchTimeoutMs: opts.webFetchTimeoutMs,
+      webFetchMaxChars: opts.webFetchMaxChars,
       runSubagent,
     }),
     ...(model ? { model: model as never } : {}),

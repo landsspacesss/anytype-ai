@@ -141,6 +141,38 @@ describe("loadConfig", () => {
     expect(custom.searchModel).toBe("deepseek-flash");
   });
 
+  it("defaults the web_fetch settings and reads LIGHTPANDA_BIN / WEB_FETCH_*", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.webFetchBin).toBe("lightpanda");
+    expect(dflt.webFetchTimeoutMs).toBe(30000);
+    expect(dflt.webFetchMaxChars).toBe(20000);
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      LIGHTPANDA_BIN: "/opt/lp",
+      WEB_FETCH_TIMEOUT_MS: "45000",
+      WEB_FETCH_MAX_CHARS: "8000",
+    } as NodeJS.ProcessEnv);
+    expect(custom.webFetchBin).toBe("/opt/lp");
+    expect(custom.webFetchTimeoutMs).toBe(45000);
+    expect(custom.webFetchMaxChars).toBe(8000);
+  });
+
+  it("falls back to web_fetch defaults for non-positive values", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      WEB_FETCH_TIMEOUT_MS: "0",
+      WEB_FETCH_MAX_CHARS: "-5",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.webFetchTimeoutMs).toBe(30000);
+    expect(cfg.webFetchMaxChars).toBe(20000);
+  });
+
   it("reads BOT_DISPLAY_NAME and defaults to anytype-bot", () => {
     const custom = loadConfig({
       ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",

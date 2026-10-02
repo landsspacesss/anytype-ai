@@ -40,6 +40,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Empty disables the tool with a clear message.
     searchApiKey: env.DEEPSEEK_API_KEY ?? "",
     searchModel: env.SEARCH_MODEL || piModel,
+    // The `web_fetch` tool renders pages with the Lightpanda headless browser
+    // binary baked into the image; these tune the subprocess call.
+    webFetchBin: env.LIGHTPANDA_BIN || "lightpanda",
+    webFetchTimeoutMs: posInt(env, "WEB_FETCH_TIMEOUT_MS", 30000),
+    webFetchMaxChars: posInt(env, "WEB_FETCH_MAX_CHARS", 20000),
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),
     idleReapMs: num(env, "IDLE_REAP_MS", 900000),
     replyMaxLen: posInt(env, "REPLY_MAX_LEN", 4000),

@@ -11,6 +11,8 @@ import { describeCron, parseCron } from "../watch/cron.js";
 import { pollWatch } from "../watch/poller.js";
 import { webSearch } from "./web-search.js";
 import type { WebSearchResult } from "./web-search.js";
+import { webFetch } from "./web-fetch.js";
+import type { WebFetchFormat } from "./web-fetch.js";
 
 /** Cap how many page images we attach per read, and the max edge length. */
 const MAX_IMAGES_PER_READ = 6;
@@ -276,6 +278,23 @@ const DOWNLOAD_FILE_GUIDELINE =
 const WEB_SEARCH_GUIDELINE =
   "Use `web_search` for current events / facts you're unsure about; cite the returned sources.";
 
+/** Extra guideline for the web_fetch tool (the rest are the shared identity ones). */
+const WEB_FETCH_GUIDELINE =
+  "Use `web_fetch` to read the full content of a specific page (e.g. a URL returned by web_search); " +
+  "it renders with a real JS-capable headless browser and returns readable text (default Markdown).";
+
+/** Maps a user-facing `format` param to Lightpanda's dump mode (default markdown). */
+function toFetchFormat(raw: unknown): WebFetchFormat {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  switch (v) {
+    case "html": return "html";
+    case "text": return "semantic_tree_text";
+    case "semantic": return "semantic_tree";
+    case "markdown": return "markdown";
+    default: return "markdown";
+  }
+}
+
 /**
  * Build the Anytype tool set bound to one space via the shared client.
  * Results are returned as text content; failures are surfaced to the model as
@@ -302,6 +321,14 @@ export function createAnytypeTools(deps: {
   searchMaxUses?: number;
   /** Search implementation (defaults to the real DeepSeek web search; injectable for tests). */
   searchFn?: typeof webSearch;
+  /** Lightpanda binary for `web_fetch` (env LIGHTPANDA_BIN). Default "lightpanda". */
+  lightpandaBin?: string;
+  /** Timeout (ms) for a `web_fetch` run (env WEB_FETCH_TIMEOUT_MS). Default 30000. */
+  webFetchTimeoutMs?: number;
+  /** Max characters returned by `web_fetch` (env WEB_FETCH_MAX_CHARS). Default 20000. */
+  webFetchMaxChars?: number;
+  /** Web-fetch implementation (defaults to the Lightpanda-backed webFetch; injectable for tests). */
+  runFetch?: (opts: { url: string; format?: string; strip?: string }) => Promise<{ text: string }>;
   /**
    * When set, adds a `subagent` tool that delegates a self-contained task to a
    * fresh, isolated session and returns its final text. Absent for child
@@ -321,8 +348,25 @@ export function createAnytypeTools(deps: {
     searchModel,
     searchMaxUses,
     searchFn = webSearch,
+    lightpandaBin = "lightpanda",
+    webFetchTimeoutMs = 30000,
+    webFetchMaxChars = 20000,
+    runFetch,
     runSubagent,
   } = deps;
+
+  /** The effective web-fetch impl: an injected one, else the Lightpanda-backed default. */
+  const runFetchImpl =
+    runFetch ??
+    ((o: { url: string; format?: string; strip?: string }) =>
+      webFetch({
+        url: o.url,
+        format: o.format as WebFetchFormat | undefined,
+        strip: o.strip,
+        bin: lightpandaBin,
+        timeoutMs: webFetchTimeoutMs,
+        maxChars: webFetchMaxChars,
+      }));
 
   /** Message shown when a cron expression fails validation. */
   const CRON_HELP =
@@ -1323,6 +1367,39 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const webFetchTool = defineTool({
+    name: "web_fetch",
+    label: "Fetch a web page",
+    description:
+      "Fetch a URL with a real JS-capable headless browser and return its readable content (default Markdown). " +
+      "Use this to read a specific page you already have a URL for — e.g. one returned by web_search. " +
+      "`format` selects the rendering: \"markdown\" (default), \"html\" (raw rendered DOM), \"text\" (plain semantic text), " +
+      "or \"semantic\" (semantic tree). Some sites may be unreachable from our network.",
+    promptSnippet: "web_fetch — fetch a URL with a headless browser and return readable content (default Markdown)",
+    promptGuidelines: [...GUIDELINES, WEB_FETCH_GUIDELINE],
+    parameters: Type.Object({
+      url: Type.String({ description: "The http(s) URL to fetch and read." }),
+      format: Type.Optional(
+        Type.String({
+          description: "Rendering format: \"markdown\" (default), \"html\", \"text\", or \"semantic\".",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const format = toFetchFormat(params.format);
+        const { text } = await runFetchImpl({ url: params.url, format, strip: "ui" });
+        const trimmed = text.trim();
+        if (trimmed.length === 0) {
+          return textResult("web_fetch returned no content (the page may be empty, or the site blocked it).");
+        }
+        return textResult(trimmed);
+      } catch (err) {
+        return textResult(`web_fetch failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1351,6 +1428,7 @@ export function createAnytypeTools(deps: {
     templates,
     insertMarkdown,
     webSearchTool,
+    webFetchTool,
   ] as ToolDefinition[];
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so
