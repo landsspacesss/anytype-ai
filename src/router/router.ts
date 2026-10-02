@@ -1,5 +1,5 @@
 import type { ChatTarget, NormalizedEvent } from "../types.js";
-import type { ToolProgress } from "../session/manager.js";
+import type { AgentProgress } from "../session/manager.js";
 import { shouldTrigger, stripBotMention } from "./rules.js";
 import { StatusReporter, type StatusTransport } from "../reply/status.js";
 
@@ -9,7 +9,7 @@ export interface RouterDeps {
     spaceId: string,
     chatId: string,
     prompt: string,
-    onProgress?: (p: ToolProgress) => void,
+    onProgress?: (p: AgentProgress) => void,
   ) => Promise<string>;
   send: (target: ChatTarget, text: string) => Promise<void>;
   /**

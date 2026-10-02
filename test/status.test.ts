@@ -1,5 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { formatToolProgress } from "../src/reply/status.js";
+import { formatToolProgress, formatProgress, STATUS_THINKING } from "../src/reply/status.js";
+
+describe("formatProgress", () => {
+  it("renders the thinking phase", () => {
+    expect(formatProgress({ kind: "thinking" })).toBe("🧠 思考中…");
+    expect(STATUS_THINKING).toBe("🧠 思考中…");
+  });
+
+  it("renders a tool phase via formatToolProgress", () => {
+    expect(formatProgress({ kind: "tool", tool: "anytype_search", args: { query: "物理" } })).toBe(
+      '⏳ 正在 anytype_search("物理")…',
+    );
+    expect(formatProgress({ kind: "tool", tool: "anytype_list_objects" })).toBe(
+      "⏳ 正在 anytype_list_objects…",
+    );
+  });
+});
 
 describe("formatToolProgress", () => {
   it("shows a query arg (JSON-quoted) for a search tool", () => {

@@ -227,14 +227,22 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   // Sub-agents/child sessions never set this, so they are unaffected.
   let currentProgress: ProgressCallback | undefined;
   const unsubscribe = session.subscribe((e) => {
-    if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
-      collected += e.assistantMessageEvent.delta;
-    } else if (e.type === "tool_execution_start") {
-      // Guard the shape: only forward a well-formed event, and only when a
-      // caller is listening.
-      if (currentProgress && typeof e.toolName === "string") {
-        currentProgress({ tool: e.toolName, args: e.args });
+    if (e.type === "message_update") {
+      const ev = e.assistantMessageEvent;
+      if (ev?.type === "text_delta") {
+        // Always collect reply text, regardless of any progress listener.
+        collected += ev.delta;
+      } else if (ev?.type === "thinking_start") {
+        // The model is reasoning (between/around tool calls).
+        currentProgress?.({ kind: "thinking" });
       }
+    } else if (e.type === "tool_execution_start") {
+      if (typeof e.toolName === "string") {
+        currentProgress?.({ kind: "tool", tool: e.toolName, args: e.args });
+      }
+    } else if (e.type === "tool_execution_end") {
+      // A tool finished — the model goes back to thinking.
+      currentProgress?.({ kind: "thinking" });
     }
   });
 

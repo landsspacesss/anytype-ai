@@ -1,14 +1,14 @@
 /**
- * One tool-call progress notification during an agent turn. `args` is the raw
+ * A progress notification during an agent turn: either the model is thinking
+ * (reasoning between tool calls) or a tool is executing. `args` is the raw
  * tool-call arguments as delivered by pi (shape varies per tool).
  */
-export interface ToolProgress {
-  tool: string;
-  args?: unknown;
-}
+export type AgentProgress =
+  | { kind: "thinking" }
+  | { kind: "tool"; tool: string; args?: unknown };
 
-/** Callback invoked as each tool call starts during a turn. */
-export type ProgressCallback = (p: ToolProgress) => void;
+/** Callback invoked as the turn's phase changes (thinking ↔ a tool call). */
+export type ProgressCallback = (p: AgentProgress) => void;
 
 export interface ManagedClient {
   readonly busy: boolean;

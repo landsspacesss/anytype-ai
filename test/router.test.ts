@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { Router } from "../src/router/router.js";
 import type { NormalizedEvent } from "../src/types.js";
-import type { ToolProgress } from "../src/session/manager.js";
+import type { AgentProgress } from "../src/session/manager.js";
 
 /** Minimal fake status transport; each method is a spy. */
 function fakeStatus() {
@@ -102,10 +102,10 @@ describe("Router status message", () => {
     try {
       let resolveRun!: (v: string) => void;
       const run = vi.fn(
-        (_s: string, _c: string, _p: string, onProgress?: (p: ToolProgress) => void) => {
+        (_s: string, _c: string, _p: string, onProgress?: (p: AgentProgress) => void) => {
           // Two tool calls in quick succession → one coalesced edit (the last).
-          onProgress?.({ tool: "anytype_search", args: { query: "物理" } });
-          onProgress?.({ tool: "anytype_list_objects", args: {} });
+          onProgress?.({ kind: "tool", tool: "anytype_search", args: { query: "物理" } });
+          onProgress?.({ kind: "tool", tool: "anytype_list_objects", args: {} });
           return new Promise<string>((res) => {
             resolveRun = res;
           });
@@ -122,7 +122,7 @@ describe("Router status message", () => {
 
       await vi.advanceTimersByTimeAsync(1500);
       expect(status.post).toHaveBeenCalledTimes(1);
-      expect(status.post).toHaveBeenCalledWith(expect.anything(), "⏳ 处理中…");
+      expect(status.post).toHaveBeenCalledWith(expect.anything(), "🧠 思考中…");
 
       // The trailing edit window opens; the coalesced edit carries the LATEST.
       await vi.advanceTimersByTimeAsync(800);

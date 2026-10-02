@@ -1,8 +1,11 @@
 import type { ChatTarget } from "../types.js";
-import type { ToolProgress } from "../session/manager.js";
+import type { AgentProgress } from "../session/manager.js";
 
-/** Text shown before the first tool call lands. */
-export const STATUS_PLACEHOLDER = "⏳ 处理中…";
+/** Text shown while the model is reasoning (default/placeholder state). */
+export const STATUS_THINKING = "🧠 思考中…";
+
+/** Text shown before any progress lands (same as the thinking state). */
+export const STATUS_PLACEHOLDER = STATUS_THINKING;
 
 /** Args keys we surface (in priority order) as a short hint next to the tool. */
 const HINT_KEYS = ["query", "name", "id", "object_id", "text", "url", "task", "path", "key"];
@@ -21,6 +24,12 @@ const HINT_MAX = 80;
 export function formatToolProgress(tool: string, args: unknown): string {
   const hint = hintFor(args);
   return hint ? `⏳ 正在 ${tool}(${hint})…` : `⏳ 正在 ${tool}…`;
+}
+
+/** Format one progress notification: thinking → 🧠, a tool call → ⏳. */
+export function formatProgress(p: AgentProgress): string {
+  if (p.kind === "thinking") return STATUS_THINKING;
+  return formatToolProgress(p.tool, p.args);
 }
 
 /** Extract (and normalize) a short argument hint, or "" when there is none. */
@@ -136,10 +145,10 @@ export class StatusReporter {
     }
   }
 
-  /** Called on each tool-call start during the turn. */
-  onProgress(p: ToolProgress): void {
+  /** Called as the turn's phase changes (thinking ↔ a tool call). */
+  onProgress(p: AgentProgress): void {
     if (this.disabled || this.stopped) return;
-    this.pendingText = formatToolProgress(p.tool, p.args);
+    this.pendingText = formatProgress(p);
     // Nothing to edit yet — `post()` flushes pendingText once it lands.
     if (!this.posted) return;
     this.scheduleEdit();
