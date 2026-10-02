@@ -1,7 +1,7 @@
 import type { ChatTarget, NormalizedEvent } from "../types.js";
 import type { AgentProgress } from "../session/manager.js";
 import { shouldTrigger, stripBotMention } from "./rules.js";
-import { StatusReporter, type StatusTransport } from "../reply/status.js";
+import { StatusReporter, sendLines, type StatusTransport } from "../reply/status.js";
 
 export interface RouterDeps {
   botName: string;
@@ -45,7 +45,11 @@ export class Router {
     // Live status: a self-updating placeholder that shows the current tool call
     // and is retracted when the turn ends (before the real reply is sent).
     const reporter = this.deps.status
-      ? new StatusReporter({ status: this.deps.status, delayMs: this.deps.statusDelayMs })
+      ? new StatusReporter({
+          status: this.deps.status,
+          send: (t, x) => this.deps.send(t, x),
+          delayMs: this.deps.statusDelayMs,
+        })
       : undefined;
 
     let reply: string | undefined;
@@ -60,14 +64,17 @@ export class Router {
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
     } finally {
-      // Retract the placeholder before sending anything else.
+      // Retract the transient bubbles before sending anything else.
       await reporter?.stop();
     }
 
     if (errorMsg !== undefined) {
       await this.deps.send(target, `⚠️ agent error: ${errorMsg}`);
     } else if (reply !== undefined && reply.trim().length > 0) {
-      await this.deps.send(target, reply);
+      // With a reporter, hand it the answer: it drops every transient bubble
+      // then sends one message per line. Without one, split the lines here.
+      if (reporter) await reporter.finish(reply);
+      else await sendLines(this.deps.send, target, reply);
     }
   }
 }

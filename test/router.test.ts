@@ -145,6 +145,16 @@ describe("Router status message", () => {
     }
   });
 
+  it("without a status transport, a multi-line reply is sent one message per line", async () => {
+    const run = vi.fn(async () => "第一行\n\n第二行");
+    const send = vi.fn(async () => {});
+    const r = new Router({ botName: "ai", run, send });
+    await r.handle(ev({ isDirect: true, text: "hi" }));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(1, expect.anything(), "第一行");
+    expect(send).toHaveBeenNthCalledWith(2, expect.anything(), "第二行");
+  });
+
   it("still removes the placeholder and sends the error reply when the turn throws", async () => {
     vi.useFakeTimers();
     try {

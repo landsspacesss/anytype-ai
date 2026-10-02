@@ -277,6 +277,10 @@ export class StatusReporter {
     for (const b of this.bubbles) {
       if (b.posted && b.id !== undefined) await this.safeRemove(b.id);
     }
+    // Idempotent: clear so a second teardown (Router calls stop() then finish())
+    // does not re-remove the same bubbles.
+    this.bubbles = [];
+    this.active = undefined;
   }
 
   private async safeRemove(id: string): Promise<void> {
