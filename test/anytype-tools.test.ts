@@ -263,6 +263,20 @@ describe("createAnytypeTools", () => {
     expect(refused.content[0].text).toMatch(/refused|no such file/i);
   });
 
+  it("renders the title when properties.name comes back as an array (post-patch shape)", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        properties: { name: ["改过的标题"] },
+        blocks: [{ type: "text", text: "正文" }],
+      })),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
+    const text = res.content[0].text;
+    expect(text).toContain("改过的标题");
+    expect(text).not.toContain("(untitled)");
+  });
+
   it("tolerates malformed objects/blocks when reading", async () => {
     const api = fakeApi({
       getObjectRaw: vi.fn(async () => ({ blocks: [null, 42, { text: 7 }, { text: "ok" }] })),

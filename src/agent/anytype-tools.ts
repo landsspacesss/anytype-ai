@@ -56,7 +56,11 @@ function renderObject(doc: unknown): string {
   if (doc === null || typeof doc !== "object") return "Object has no readable content.";
   const d = doc as Record<string, unknown>;
   const props = (d.properties ?? {}) as Record<string, unknown>;
-  const title = typeof props.name === "string" && props.name.length > 0 ? props.name : "(untitled)";
+  // `name` comes back as a string normally, but as a 1-element array after a
+  // set_properties patch. Accept both.
+  const rawName = props.name;
+  const nameStr = Array.isArray(rawName) ? rawName[0] : rawName;
+  const title = typeof nameStr === "string" && nameStr.length > 0 ? nameStr : "(untitled)";
 
   const blocks = Array.isArray(d.blocks) ? d.blocks : [];
   const bodyText: string[] = [];
