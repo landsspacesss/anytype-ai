@@ -36,6 +36,22 @@ export function formatProgress(p: AgentProgress): string {
   return formatToolProgress(p.tool, p.args);
 }
 
+/** A message poster (the Router's sink). */
+export type MessageSender = (target: ChatTarget, text: string) => Promise<void> | void;
+
+/** Split a reply into chat messages: one per non-blank line. */
+export function splitLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
+
+/** Send `text` as one message per (non-blank) line. */
+export async function sendLines(send: MessageSender, target: ChatTarget, text: string): Promise<void> {
+  for (const line of splitLines(text)) await send(target, line);
+}
+
 /** Extract (and normalize) a short argument hint, or "" when there is none. */
 function hintFor(args: unknown): string {
   if (args === undefined || args === null) return "";
@@ -85,28 +101,39 @@ export interface StatusReporterOptions {
   editIntervalMs?: number;
   /** Sink for non-fatal warnings. Defaults to console.warn. */
   log?: (msg: string) => void;
+  /** Poster for the final answer (used by `finish`). */
+  send?: MessageSender;
+}
+
+interface Bubble {
+  id?: string;
+  text: string;
+  posted: boolean;
 }
 
 /**
- * Drives a single self-updating "status" chat message for one agent turn:
+ * Drives the turn's live chat output as a sequence of "bubbles":
  *
- *  - `start()` schedules the placeholder post after `delayMs` (fast turns that
- *    finish sooner never flash a placeholder).
- *  - `onProgress()` records the latest tool call; edits are coalesced to at
- *    most one per `editIntervalMs`, always reflecting the latest progress.
- *  - `stop()` retracts the placeholder (if posted) and cancels pending work.
+ *  - One bubble carries the current phase; it starts as a 🧠/⏳ status line and,
+ *    when the model emits prose (narration), is edited IN PLACE to that prose.
+ *  - When a TOOL follows such prose, a NEW bubble is opened (so the prose stays
+ *    visible); a tool that does NOT follow prose just overwrites the status line.
+ *  - `finish(reply)` removes EVERY transient bubble, then sends the answer split
+ *    into one message per line. `stop()` removes them with no answer.
  *
- * All failures are swallowed (logged) so a broken status never breaks the turn.
+ * The first bubble is posted after `delayMs` (fast turns never flash a bubble).
+ * All failures are swallowed (logged) so status never breaks the turn.
  */
 export class StatusReporter {
+  private target?: ChatTarget;
+  private bubbles: Bubble[] = [];
+  private active?: Bubble;
+  private activeIsNarration = false;
+  private started = false;
   private delayTimer?: ReturnType<typeof setTimeout>;
   private editTimer?: ReturnType<typeof setTimeout>;
-  private target?: ChatTarget;
-  private messageId?: string;
-  private posted = false;
   private stopped = false;
   private disabled = false;
-  private pendingText?: string;
   private posting?: Promise<void>;
   private editing?: Promise<void>;
 
@@ -116,53 +143,80 @@ export class StatusReporter {
     (this.opts.log ?? ((m: string) => console.warn(m)))(msg);
   }
 
-  /** Begin the turn. Schedules the (delayed) placeholder post. */
   start(target: ChatTarget): void {
     if (this.disabled || this.stopped) return;
     this.target = target;
     const delay = this.opts.delayMs ?? 1500;
     this.delayTimer = setTimeout(() => {
       this.delayTimer = undefined;
-      const p = this.post().finally(() => {
-        if (this.posting === p) this.posting = undefined;
-      });
-      this.posting = p;
+      this.started = true;
+      // A slow turn may reach the delay with no progress yet (e.g. the model is
+      // still thinking): open the first bubble so the placeholder still posts.
+      if (!this.active) {
+        this.active = { text: STATUS_THINKING, posted: false };
+        this.bubbles.push(this.active);
+      }
+      this.flushPost();
     }, delay);
   }
 
-  private async post(): Promise<void> {
-    if (this.posted || this.disabled || this.stopped || !this.target) return;
+  /** Called as the turn's phase changes. */
+  onProgress(p: AgentProgress): void {
+    if (this.disabled || this.stopped || !this.target) return;
+    if (p.kind === "narration") {
+      this.setActiveText(p.text, true);
+    } else if (p.kind === "tool") {
+      if (this.activeIsNarration) this.active = undefined; // open a new bubble
+      this.setActiveText(formatToolProgress(p.tool, p.args), false);
+    } else {
+      if (this.activeIsNarration) this.active = undefined;
+      this.setActiveText(STATUS_THINKING, false);
+    }
+  }
+
+  private setActiveText(text: string, narration: boolean): void {
+    if (!this.active) {
+      this.active = { text, posted: false };
+      this.bubbles.push(this.active);
+      if (this.started) this.flushPost();
+    } else {
+      this.active.text = text;
+    }
+    this.activeIsNarration = narration;
+    if (this.active.posted) this.scheduleEdit();
+  }
+
+  private flushPost(): void {
+    const b = this.active;
+    if (!b || b.posted || this.disabled || this.stopped || !this.target) return;
+    const isFirst = this.bubbles[0] === b;
+    const text = isFirst ? STATUS_PLACEHOLDER : b.text;
+    const p = this.doPost(b, text).finally(() => {
+      if (this.posting === p) this.posting = undefined;
+    });
+    this.posting = p;
+  }
+
+  private async doPost(b: Bubble, text: string): Promise<void> {
+    if (!this.target) return;
     try {
-      const id = await this.opts.status.post(this.target, STATUS_PLACEHOLDER);
+      const id = await this.opts.status.post(this.target, text);
       if (this.stopped) {
-        // The turn ended while the POST was in flight: retract immediately.
         await this.safeRemove(id);
         return;
       }
-      this.messageId = id;
-      this.posted = true;
-      // Flush any progress that arrived before the placeholder existed.
-      if (this.pendingText !== undefined) this.scheduleEdit();
+      b.id = id;
+      b.posted = true;
+      if (b.text !== text) this.scheduleEdit(); // reconcile to the latest text
     } catch (err) {
       this.disabled = true;
       this.warn(`status post failed: ${String(err)}`);
     }
   }
 
-  /** Called as the turn's phase changes (thinking ↔ a tool call). */
-  onProgress(p: AgentProgress): void {
-    if (this.disabled || this.stopped) return;
-    this.pendingText = formatProgress(p);
-    // Nothing to edit yet — `post()` flushes pendingText once it lands.
-    if (!this.posted) return;
-    this.scheduleEdit();
-  }
-
-  // Trailing coalescer: at most one edit per window; the single pending edit
-  // always carries the most recent text.
   private scheduleEdit(): void {
     if (this.disabled || this.stopped) return;
-    if (this.editTimer) return; // window already open
+    if (this.editTimer) return;
     const interval = this.opts.editIntervalMs ?? 800;
     this.editTimer = setTimeout(() => {
       this.editTimer = undefined;
@@ -174,23 +228,29 @@ export class StatusReporter {
   }
 
   private async flushEdit(): Promise<void> {
-    if (this.disabled || this.stopped || !this.posted || this.messageId === undefined || !this.target) {
+    const b = this.active;
+    if (this.disabled || this.stopped || !b || !b.posted || b.id === undefined || !this.target) {
       return;
     }
-    const text = this.pendingText;
-    this.pendingText = undefined;
-    if (text === undefined) return;
     try {
-      await this.opts.status.edit(this.target, this.messageId, text);
+      await this.opts.status.edit(this.target, b.id, b.text);
     } catch (err) {
       this.warn(`status edit failed: ${String(err)}`);
     }
-    // Progress arrived while editing: open a new window for the latest text.
-    if (this.pendingText !== undefined && !this.stopped && !this.disabled) this.scheduleEdit();
   }
 
-  /** End the turn: cancel timers, drain in-flight work, retract the message. */
+  /** End the turn: drop all transient bubbles, then post the answer (one line per message). */
+  async finish(reply: string): Promise<void> {
+    await this.teardown();
+    if (this.opts.send && this.target) await sendLines(this.opts.send, this.target, reply);
+  }
+
+  /** End the turn with no answer (error/interrupt): just drop the transient bubbles. */
   async stop(): Promise<void> {
+    await this.teardown();
+  }
+
+  private async teardown(): Promise<void> {
     this.stopped = true;
     if (this.delayTimer) {
       clearTimeout(this.delayTimer);
@@ -200,11 +260,10 @@ export class StatusReporter {
       clearTimeout(this.editTimer);
       this.editTimer = undefined;
     }
-    // Let any in-flight POST/EDIT settle so removal is the last mutation.
     await this.posting?.catch(() => undefined);
     await this.editing?.catch(() => undefined);
-    if (this.posted && this.messageId !== undefined) {
-      await this.safeRemove(this.messageId);
+    for (const b of this.bubbles) {
+      if (b.posted && b.id !== undefined) await this.safeRemove(b.id);
     }
   }
 

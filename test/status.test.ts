@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { formatToolProgress, formatProgress, STATUS_THINKING } from "../src/reply/status.js";
+import { describe, it, expect, vi } from "vitest";
+import { formatToolProgress, formatProgress, STATUS_THINKING, StatusReporter, splitLines, sendLines } from "../src/reply/status.js";
 
 describe("formatProgress", () => {
   it("renders the thinking phase", () => {
@@ -70,5 +70,102 @@ describe("formatToolProgress", () => {
   it("never emits a newline", () => {
     const out = formatToolProgress("t", { text: "line1\nline2" });
     expect(out).not.toContain("\n");
+  });
+});
+
+function fakeTransport() {
+  let n = 0;
+  return {
+    post: vi.fn(async () => `m${++n}`),
+    edit: vi.fn(async () => {}),
+    remove: vi.fn(async () => {}),
+  };
+}
+
+describe("splitLines / sendLines", () => {
+  it("splits on newlines, trims, drops blanks", () => {
+    expect(splitLines("a\n\n  b  \r\nc")).toEqual(["a", "b", "c"]);
+  });
+  it("sendLines sends one message per line", async () => {
+    const send = vi.fn(async () => {});
+    await sendLines(send, { spaceId: "s", chatId: "c" }, "one\ntwo");
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(1, expect.anything(), "one");
+    expect(send).toHaveBeenNthCalledWith(2, expect.anything(), "two");
+  });
+});
+
+describe("StatusReporter rotating bubbles", () => {
+  const T = { spaceId: "s", chatId: "c" };
+
+  it("narration replaces the thinking bubble in place (no new post)", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 0 });
+      r.start(T);
+      r.onProgress({ kind: "thinking" });
+      await vi.advanceTimersByTimeAsync(0);            // placeholder posts
+      r.onProgress({ kind: "narration", text: "让我查一下" });
+      await vi.advanceTimersByTimeAsync(0);            // edit to narration
+      expect(status.post).toHaveBeenCalledTimes(1);
+      expect(status.edit).toHaveBeenLastCalledWith(expect.anything(), "m1", "让我查一下");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("a tool AFTER narration opens a NEW bubble", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 0 });
+      r.start(T);
+      r.onProgress({ kind: "narration", text: "先查" });
+      await vi.advanceTimersByTimeAsync(0);
+      r.onProgress({ kind: "tool", tool: "anytype_search", args: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(status.post).toHaveBeenCalledTimes(2);   // second bubble
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("a tool WITHOUT preceding narration reuses the bubble (no new post)", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 0 });
+      r.start(T);
+      r.onProgress({ kind: "tool", tool: "anytype_search", args: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(status.post).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("finish removes every transient bubble then sends the answer per line", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 0 });
+      r.start(T);
+      r.onProgress({ kind: "narration", text: "先查" });
+      await vi.advanceTimersByTimeAsync(0);
+      r.onProgress({ kind: "tool", tool: "anytype_search", args: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      await r.finish("答案一\n答案二");
+      expect(status.remove).toHaveBeenCalledTimes(2); // both bubbles
+      expect(send).toHaveBeenNthCalledWith(1, expect.anything(), "答案一");
+      expect(send).toHaveBeenNthCalledWith(2, expect.anything(), "答案二");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("empty answer sends nothing (turn ended right after a tool)", async () => {
+    vi.useFakeTimers();
+    try {
+      const status = fakeTransport(); const send = vi.fn(async () => {});
+      const r = new StatusReporter({ status, send, delayMs: 0, editIntervalMs: 0 });
+      r.start(T);
+      r.onProgress({ kind: "tool", tool: "x", args: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      await r.finish("");
+      expect(send).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });
