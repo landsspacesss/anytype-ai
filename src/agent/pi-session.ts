@@ -7,12 +7,18 @@ import {
   createAgentSession,
 } from "@earendil-works/pi-coding-agent";
 import type { ManagedClient } from "../session/manager.js";
+import type { AnytypeClient } from "../anytype/client.js";
+import { createAnytypeTools } from "./anytype-tools.js";
 
 export interface PiClientOptions {
   /** Working directory for the agent (its project-local context lives here). */
   cwd: string;
   /** Global pi config dir. Defaults to pi's own `~/.pi/agent`. */
   agentDir?: string;
+  /** Shared Anytype client used by the Anytype tools. */
+  api: AnytypeClient;
+  /** The Anytype space this agent lives in. */
+  spaceId: string;
 }
 
 /**
@@ -32,6 +38,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     authStorage,
     modelRegistry,
     sessionManager: SessionManager.inMemory(),
+    customTools: createAnytypeTools({ api: opts.api, spaceId: opts.spaceId }),
   });
 
   let collected = "";
@@ -71,6 +78,12 @@ export function ensureAgentFiles(workspaceDir: string): void {
   const agentsMd = path.join(workspaceDir, "AGENTS.md");
   if (fs.existsSync(agentsMd)) return;
   const body = [
+    "# Identity",
+    "",
+    "You are an AI assistant living inside an Anytype space. The user's notes and",
+    "pages live in Anytype — use the `anytype_*` tools to read them. Do not confuse",
+    "Anytype content with local files.",
+    "",
     "# Memory",
     "",
     "This workspace keeps durable notes in `MEMORY.md` (create it if missing).",

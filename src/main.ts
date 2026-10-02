@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
       // (pi auto-loads AGENTS.md from cwd at session creation).
       ensureAgentFiles(dir);
-      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir });
+      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir, api, spaceId });
     },
   });
 
