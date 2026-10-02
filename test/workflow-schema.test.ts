@@ -54,6 +54,9 @@ describe("render", () => {
   it("leaves non-template text untouched", () => {
     expect(render("hello", {})).toBe("hello");
   });
+  it("substitutes step ids that contain hyphens", () => {
+    expect(render("{{ steps.my-step.output }}", { steps: { "my-step": { output: "hi" } } })).toBe("hi");
+  });
 });
 
 describe("evalIf", () => {

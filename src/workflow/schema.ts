@@ -72,7 +72,7 @@ function lookup(scope: Record<string, unknown>, path: string): unknown {
 
 /** Replace every `{{ dotted.path }}` with the scope value (String(...)); unknown → "". */
 export function render(tpl: string, scope: Record<string, unknown>): string {
-  return tpl.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, path: string) => {
+  return tpl.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, path: string) => {
     const v = lookup(scope, path);
     return v === undefined || v === null ? "" : String(v);
   });
