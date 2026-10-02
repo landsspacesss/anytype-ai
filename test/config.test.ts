@@ -282,4 +282,17 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
     expect(bad.toolStatusDelayMs).toBe(1500);
   });
+
+  it("parses CONSOLE_SPACE_ID when set", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k", CONSOLE_SPACE_ID: "  xy7 ",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.consoleSpaceId).toBe("xy7");
+  });
+  it("leaves consoleSpaceId undefined when unset", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.consoleSpaceId).toBeUndefined();
+  });
 });

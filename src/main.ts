@@ -16,6 +16,7 @@ import { handleCommand, type CommandContext } from "./commands/handler.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
+import { readConsole } from "./console/console-store.js";
 import type { ChatTarget, NormalizedEvent } from "./types.js";
 
 /** Agent memory scope is per-SPACE: one workspace directory per space id. */
@@ -36,6 +37,15 @@ async function main(): Promise<void> {
   // dir. The dir is a volume mount, so this can't be baked into the image.
   const agentDir = cfg.piAgentDir ?? path.join(os.homedir(), ".pi", "agent");
   ensureModelsConfig(agentDir);
+
+  // The global-console space: one space with cross-space read powers and a
+  // shared workspace. Stage 1 has no auto-bootstrap — a human writes
+  // `/workspace/console.json` or sets CONSOLE_SPACE_ID. Env wins over the file.
+  const consoleFile = path.join(cfg.agentWorkspaceRoot, "console.json");
+  const consoleRec = readConsole(consoleFile);
+  const consoleSpaceId = cfg.consoleSpaceId ?? consoleRec?.spaceId;
+  const isConsoleSpace = (spaceId: string): boolean => !!consoleSpaceId && spaceId === consoleSpaceId;
+
   const api = new AnytypeClient({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey });
   const controller = new AbortController();
 
@@ -64,7 +74,12 @@ async function main(): Promise<void> {
     },
     createClient: async (chatId) => {
       const spaceId = chatTargets.get(chatId)?.spaceId ?? "unknown";
-      const dir = workspaceFor(cfg.agentWorkspaceRoot, spaceId);
+      // The console session shares one global workspace (`_global`) rather than
+      // a per-space dir, so its memory covers every space.
+      const consoleSession = isConsoleSpace(spaceId);
+      const dir = consoleSession
+        ? path.join(cfg.agentWorkspaceRoot, "_global")
+        : workspaceFor(cfg.agentWorkspaceRoot, spaceId);
       // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
       // (pi auto-loads AGENTS.md from cwd at session creation).
       ensureAgentFiles(dir);
@@ -91,6 +106,8 @@ async function main(): Promise<void> {
         subagentIdleMs: cfg.subagentIdleMs,
         chatSessionDir,
         resume: sessions.resumeFor(chatId),
+        isConsole: consoleSession,
+        agentWorkspaceRoot: cfg.agentWorkspaceRoot,
         // A brand-new client adopts the chat's current interrupt policy, so a
         // policy set via /interrupt survives an idle-reap/rebuild.
         interruptPolicy: sessions.getInterruptPolicy(chatId),

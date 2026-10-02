@@ -9,6 +9,7 @@ import {
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
+import { CONSOLE_TOOLS } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
@@ -77,5 +78,21 @@ describe("ensureAgentFiles", () => {
     ensureAgentFiles(dir);
     expect(fs.readFileSync(agentsMd, "utf-8")).toBe("custom-existing-content");
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("CONSOLE_TOOLS", () => {
+  it("contains read tools and global tools, and NO write tools", () => {
+    expect(CONSOLE_TOOLS).toContain("anytype_read_object");
+    expect(CONSOLE_TOOLS).toContain("anytype_search");
+    expect(CONSOLE_TOOLS).toContain("anytype_list_spaces");
+    expect(CONSOLE_TOOLS).toContain("anytype_memories");
+    for (const w of [
+      "anytype_create_note", "anytype_update_object", "anytype_delete_object",
+      "anytype_edit_object", "anytype_send_message", "anytype_upload_file",
+      "anytype_watch", "anytype_set_property",
+    ]) {
+      expect(CONSOLE_TOOLS).not.toContain(w);
+    }
   });
 });

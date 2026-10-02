@@ -61,6 +61,10 @@ export interface PiClientOptions {
   resume?: boolean;
   /** How an in-flight turn reacts to a newer message. Default `step`. */
   interruptPolicy?: InterruptPolicy;
+  /** True for the global-console session: read-only tool set, global workspace. */
+  isConsole?: boolean;
+  /** Root dir holding per-space workspaces (used for the console's memory aggregate). */
+  agentWorkspaceRoot?: string;
 }
 
 /** Tool names kept when YOLO / auto-approve mode is OFF (read-only safety set). */
@@ -77,6 +81,28 @@ export const READONLY_TOOLS: readonly string[] = [
   "web_search",
   "web_fetch",
   "anytype_watch",
+];
+
+/**
+ * Tool set for the CONSOLE session: read-only reads plus the global tools.
+ * Deliberately excludes EVERY mutating tool (create/update/delete/edit/send/
+ * upload/watch/collection/type/property/template), so the model physically
+ * cannot write. Enforced by omission, not by prompt.
+ */
+export const CONSOLE_TOOLS: readonly string[] = [
+  "read", "ls", "grep", "find",
+  "anytype_list_spaces",
+  "anytype_list_objects",
+  "anytype_search",
+  "anytype_read_object",
+  "anytype_download_images",
+  "anytype_download_file",
+  "anytype_memories",
+  "crop_image",
+  "anytype_list_properties",
+  "anytype_list_types",
+  "web_search",
+  "web_fetch",
 ];
 
 /**
@@ -262,6 +288,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       webFetchMaxChars: opts.webFetchMaxChars,
       runSubagent,
       agentRegistry,
+      // ONLY the top-level console session gets the global dep (cross-space
+      // read + list_spaces + memories). Child sessions never receive it.
+      ...(opts.isConsole ? { console: { workspaceRoot: opts.agentWorkspaceRoot! } } : {}),
     }),
     ...(model ? { model: model as never } : {}),
   });
@@ -319,7 +348,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   // subagent/agent). Default ON.
   let autoTools = true;
   const applyTools = (): void => {
-    const names = autoTools ? session.getAllTools().map((t) => t.name) : [...READONLY_TOOLS];
+    const names = autoTools ? session.getAllTools().map((t) => t.name) : [...(opts.isConsole ? CONSOLE_TOOLS : READONLY_TOOLS)];
     session.setActiveToolsByName(names);
   };
   // Establish the default (all tools) explicitly, so the agent's active set

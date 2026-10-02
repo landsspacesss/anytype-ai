@@ -57,6 +57,8 @@ export interface Config {
   webFetchMaxChars: number;
   maxConcurrentSessions: number;
   idleReapMs: number;
+  /** Explicit console space id (env CONSOLE_SPACE_ID). Overrides console.json. */
+  consoleSpaceId?: string;
   /** Max live named sub-agents per parent session (env MAX_SUBAGENTS). Default 5. */
   maxSubagents: number;
   /** Idle (ms) after which a non-busy named sub-agent is lazily reaped (env SUBAGENT_IDLE_MS). Default 900000. */
