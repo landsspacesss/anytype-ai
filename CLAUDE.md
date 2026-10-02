@@ -63,6 +63,13 @@ Key facts that span multiple files:
   not a subprocess. `createPiClient` builds an `AgentSession` with our custom tools,
   subscribes to its events (collecting `text_delta`, forwarding tool/thinking events
   as `AgentProgress`), and exposes the `ManagedClient` interface (`src/session/manager.ts`).
+- **Live chat output is a sequence of bubbles, not one status line.**
+  `AgentProgress` gained a `narration` kind; `pi-session` runs streamed text through a
+  `TextSegmenter` so narration (text before a tool) is separated from the answer (the
+  last segment). `src/reply/status.ts` `StatusReporter` is a sequence of rotating
+  bubbles — a narration edits the current bubble in place, a following tool opens a
+  new one — and `finish(reply)` drops every transient bubble, then `sendLines` posts
+  one message per (non-blank) line.
 - **Tools live in `src/agent/anytype-tools.ts`** (one big `createAnytypeTools(deps)`),
   with `web-search.ts`, `web-fetch.ts`, `subagents.ts` alongside. Child (sub)agent
   sessions are built with the same tools but **without** `runSubagent`/`agentRegistry`,
