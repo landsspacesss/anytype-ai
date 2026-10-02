@@ -155,10 +155,15 @@ async function main(): Promise<void> {
     },
   });
 
+  // Monotonic nonce so two sends in the same millisecond (e.g. consecutive
+  // answer lines, or two status bubbles) never share an idempotency key — a
+  // collision would make the Anytype API dedupe one away.
+  let sendSeq = 0;
+
   const sink = new ReplySink({
     maxLen: cfg.replyMaxLen,
     send: (target, text, key) => api.sendMessage(target.spaceId, target.chatId, text, key),
-    keyFor: (target) => `${target.chatId}-${Date.now()}`,
+    keyFor: (target) => `${target.chatId}-${Date.now()}-${++sendSeq}`,
   });
 
   // One approval gate per chat; its `post` writes the prompt into that chat.
@@ -189,7 +194,7 @@ async function main(): Promise<void> {
   const status = cfg.toolStatus
     ? {
         post: (t: ChatTarget, text: string) =>
-          api.sendMessageReturningId(t.spaceId, t.chatId, text, `status-${t.chatId}-${Date.now()}`),
+          api.sendMessageReturningId(t.spaceId, t.chatId, text, `status-${t.chatId}-${Date.now()}-${++sendSeq}`),
         edit: (t: ChatTarget, id: string, text: string) =>
           api.editMessage(t.spaceId, t.chatId, id, text),
         remove: (t: ChatTarget, id: string) => api.deleteMessage(t.spaceId, t.chatId, id),
