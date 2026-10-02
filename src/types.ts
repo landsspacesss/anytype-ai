@@ -53,6 +53,10 @@ export interface Config {
   webFetchMaxChars: number;
   maxConcurrentSessions: number;
   idleReapMs: number;
+  /** Max live named sub-agents per parent session (env MAX_SUBAGENTS). Default 5. */
+  maxSubagents: number;
+  /** Idle (ms) after which a non-busy named sub-agent is lazily reaped (env SUBAGENT_IDLE_MS). Default 900000. */
+  subagentIdleMs: number;
   replyMaxLen: number;
   /** How often the cron scheduler ticks to check which watches are due (env WATCH_TICK_MS). */
   watchTickMs: number;

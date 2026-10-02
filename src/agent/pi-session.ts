@@ -11,6 +11,8 @@ import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
 import { DEFAULT_WATCH_CRON } from "../watch/store.js";
 import { createAnytypeTools } from "./anytype-tools.js";
+import { SubagentRegistry } from "./subagents.js";
+import type { ChildAgent } from "./subagents.js";
 
 export interface PiClientOptions {
   /** Working directory for the agent (its project-local context lives here). */
@@ -39,6 +41,10 @@ export interface PiClientOptions {
   webFetchTimeoutMs?: number;
   /** Max characters returned by `web_fetch` (env WEB_FETCH_MAX_CHARS). */
   webFetchMaxChars?: number;
+  /** Live named sub-agent cap for the `agent` tool (env MAX_SUBAGENTS). Default 5. */
+  maxSubagents?: number;
+  /** Idle (ms) after which a non-busy named sub-agent is reaped (env SUBAGENT_IDLE_MS). Default 900000. */
+  subagentIdleMs?: number;
 }
 
 /** Where the baked-in custom model registry lives in the image. */
@@ -86,10 +92,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   if (opts.modelId && !model) {
     console.warn(`pi model "${opts.modelId}" not found in registry; using pi default`);
   }
-  // Spawn a fresh, isolated session for one self-contained task and return its
-  // final text. The child gets the same Anytype tools but NO subagent tool, so
-  // it cannot recurse.
-  const runSubagent = async (task: string): Promise<string> => {
+  // Build a fresh, isolated child session. The child gets the same Anytype
+  // tools but NO subagent/agent tool, so it cannot recurse.
+  const createChildAgent = async (): Promise<ChildAgent> => {
     const { session: child } = await createAgentSession({
       cwd: opts.cwd,
       agentDir: opts.agentDir,
@@ -102,17 +107,49 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
         searchApiKey: opts.searchApiKey ?? "", searchModel: opts.searchModel,
         lightpandaBin: opts.lightpandaBin, webFetchTimeoutMs: opts.webFetchTimeoutMs,
         webFetchMaxChars: opts.webFetchMaxChars,
-        // NOTE: no runSubagent → the child cannot spawn further sub-agents.
+        // NOTE: no runSubagent and no agentRegistry → the child cannot spawn
+        // further sub-agents (no recursion).
       }),
       ...(model ? { model: model as never } : {}),
     });
-    let text = "";
+    let collected = "";
     const unsub = child.subscribe((e) => {
-      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") text += e.assistantMessageEvent.delta;
+      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
+        collected += e.assistantMessageEvent.delta;
+      }
     });
-    try { await child.prompt(task); } finally { unsub(); child.dispose(); }
-    return text;
+    return {
+      get busy(): boolean {
+        return child.isStreaming;
+      },
+      async prompt(text: string): Promise<string> {
+        collected = "";
+        await child.prompt(text);
+        return collected;
+      },
+      dispose(): void {
+        unsub();
+        child.dispose();
+      },
+    };
   };
+
+  // One-shot delegation: a fresh child per call, disposed when the task ends.
+  const runSubagent = async (task: string): Promise<string> => {
+    const a = await createChildAgent();
+    try {
+      return await a.prompt(task);
+    } finally {
+      a.dispose();
+    }
+  };
+
+  // Persistent, named sub-agents for the parent's `agent` tool.
+  const agentRegistry = new SubagentRegistry({
+    create: () => createChildAgent(),
+    maxAgents: opts.maxSubagents ?? 5,
+    idleMs: opts.subagentIdleMs ?? 900000,
+  });
 
   const { session } = await createAgentSession({
     cwd: opts.cwd,
@@ -133,6 +170,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       webFetchTimeoutMs: opts.webFetchTimeoutMs,
       webFetchMaxChars: opts.webFetchMaxChars,
       runSubagent,
+      agentRegistry,
     }),
     ...(model ? { model: model as never } : {}),
   });
@@ -154,6 +192,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       return collected;
     },
     async close(): Promise<void> {
+      agentRegistry.killAll();
       unsubscribe();
       session.dispose();
     },

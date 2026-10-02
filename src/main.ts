@@ -67,6 +67,8 @@ async function main(): Promise<void> {
         lightpandaBin: cfg.webFetchBin,
         webFetchTimeoutMs: cfg.webFetchTimeoutMs,
         webFetchMaxChars: cfg.webFetchMaxChars,
+        maxSubagents: cfg.maxSubagents,
+        subagentIdleMs: cfg.subagentIdleMs,
       });
     },
   });

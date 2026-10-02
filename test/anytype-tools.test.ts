@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { createAnytypeTools } from "../src/agent/anytype-tools.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
 import type { WatchStore, WatchRecord } from "../src/watch/store.js";
+import type { SubagentRegistry, SubagentInfo } from "../src/agent/subagents.js";
 
 /** A throwaway workspace dir for tool tests. */
 function tmpWorkspace(): string {
@@ -131,6 +132,39 @@ function mkToolsWithSubagent(
   });
 }
 
+/** The common required deps (no runSubagent / agentRegistry). */
+function baseDeps(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: string = CHAT) {
+  return {
+    api,
+    spaceId: SPACE,
+    workspaceDir: tmpWorkspace(),
+    store,
+    chatId,
+    defaultWatchCron: DEFAULT_CRON,
+    searchApiKey: "",
+  };
+}
+
+/** A stub SubagentRegistry that records calls (cast; the shape is what matters). */
+function fakeRegistry(
+  opts: { items?: SubagentInfo[]; killResult?: boolean; spawnError?: Error } = {},
+) {
+  const spawn = vi.fn(async (name: string): Promise<SubagentInfo> => {
+    if (opts.spawnError) throw opts.spawnError;
+    return { name, busy: false, lastUsed: 0 };
+  });
+  const message = vi.fn(async (_name: string, text: string) => `reply:${text}`);
+  const list = vi.fn((): SubagentInfo[] => opts.items ?? []);
+  const kill = vi.fn(() => opts.killResult ?? true);
+  const registry = { spawn, message, list, kill } as unknown as SubagentRegistry;
+  return { registry, spawn, message, list, kill };
+}
+
+/** Like mkTools, but with an agentRegistry so the `agent` tool is added. */
+function mkToolsWithAgent(api: AnytypeClient, registry: SubagentRegistry) {
+  return createAnytypeTools({ ...baseDeps(api), agentRegistry: registry });
+}
+
 describe("createAnytypeTools", () => {
   it("returns the twenty-eight tools (no subagent) with expected names", () => {
     const tools = mkTools(fakeApi());
@@ -199,6 +233,86 @@ describe("createAnytypeTools", () => {
     const res = await run(toolByName(tools, "subagent"), { task: "t" });
     expect(res.content[0].text).toContain("subagent failed");
     expect(res.content[0].text).toContain("boom 500");
+  });
+
+  it("adds a thirtieth `agent` tool when BOTH runSubagent and agentRegistry are provided", () => {
+    const tools = createAnytypeTools({
+      ...baseDeps(fakeApi()),
+      runSubagent: async () => "x",
+      agentRegistry: fakeRegistry().registry,
+    });
+    expect(tools).toHaveLength(30);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("agent");
+    expect(names[names.length - 1]).toBe("agent");
+  });
+
+  it("omits the `agent` tool (count 29) when agentRegistry is absent", () => {
+    const tools = mkToolsWithSubagent(fakeApi());
+    expect(tools).toHaveLength(29);
+    expect(tools.map((t) => t.name)).not.toContain("agent");
+  });
+
+  it("agent spawn (no task) creates the named agent and says so", async () => {
+    const { registry, spawn } = fakeRegistry();
+    const tools = mkToolsWithAgent(fakeApi(), registry);
+    const res = await run(toolByName(tools, "agent"), { action: "spawn", name: "counter" });
+    expect(spawn).toHaveBeenCalledWith("counter");
+    expect(res.content[0].text).toBe("已创建子代理「counter」");
+  });
+
+  it("agent spawn with a task immediately messages the agent and returns its reply", async () => {
+    const { registry, spawn, message } = fakeRegistry();
+    const tools = mkToolsWithAgent(fakeApi(), registry);
+    const res = await run(toolByName(tools, "agent"), { action: "spawn", name: "counter", task: "记住7" });
+    expect(spawn).toHaveBeenCalledWith("counter");
+    expect(message).toHaveBeenCalledWith("counter", "记住7");
+    expect(res.content[0].text).toBe("reply:记住7");
+  });
+
+  it("agent message returns the named agent's reply", async () => {
+    const { registry, message } = fakeRegistry();
+    const tools = mkToolsWithAgent(fakeApi(), registry);
+    const res = await run(toolByName(tools, "agent"), { action: "message", name: "counter", message: "你记的数字?" });
+    expect(message).toHaveBeenCalledWith("counter", "你记的数字?");
+    expect(res.content[0].text).toBe("reply:你记的数字?");
+  });
+
+  it("agent list renders each agent, and says (no sub-agents) when empty", async () => {
+    const empty = fakeRegistry({ items: [] });
+    const emptyRes = await run(toolByName(mkToolsWithAgent(fakeApi(), empty.registry), "agent"), { action: "list" });
+    expect(emptyRes.content[0].text).toBe("(no sub-agents)");
+
+    const { registry } = fakeRegistry({
+      items: [
+        { name: "counter", busy: true, lastUsed: 1, lastResult: "7" },
+        { name: "worker", busy: false, lastUsed: 2 },
+      ],
+    });
+    const res = await run(toolByName(mkToolsWithAgent(fakeApi(), registry), "agent"), { action: "list" });
+    const text = res.content[0].text;
+    expect(text).toContain("- counter (busy) — last: 7");
+    expect(text).toContain("- worker (idle) — last: ");
+  });
+
+  it("agent kill reports whether the agent existed", async () => {
+    const { registry, kill } = fakeRegistry({ killResult: true });
+    const tools = mkToolsWithAgent(fakeApi(), registry);
+    const res = await run(toolByName(tools, "agent"), { action: "kill", name: "counter" });
+    expect(kill).toHaveBeenCalledWith("counter");
+    expect(res.content[0].text).toBe("已删除子代理「counter」");
+
+    const missing = fakeRegistry({ killResult: false });
+    const res2 = await run(toolByName(mkToolsWithAgent(fakeApi(), missing.registry), "agent"), { action: "kill", name: "x" });
+    expect(res2.content[0].text).toBe("没有名为「x」的子代理");
+  });
+
+  it("agent surfaces registry errors as text instead of throwing", async () => {
+    const { registry } = fakeRegistry({ spawnError: new Error("too many sub-agents (max 5)") });
+    const tools = mkToolsWithAgent(fakeApi(), registry);
+    const res = await run(toolByName(tools, "agent"), { action: "spawn", name: "x" });
+    expect(res.content[0].text).toContain("agent failed");
+    expect(res.content[0].text).toContain("too many sub-agents (max 5)");
   });
 
   it("every tool carries a description, promptSnippet, and identity guidelines", () => {

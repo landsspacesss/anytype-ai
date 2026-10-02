@@ -68,6 +68,32 @@ describe("loadConfig", () => {
     expect(dflt.watchDefaultCron).toBe("*/30 * * * *");
   });
 
+  it("defaults and reads MAX_SUBAGENTS / SUBAGENT_IDLE_MS", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.maxSubagents).toBe(5);
+    expect(dflt.subagentIdleMs).toBe(900000);
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      MAX_SUBAGENTS: "8",
+      SUBAGENT_IDLE_MS: "120000",
+    } as NodeJS.ProcessEnv);
+    expect(custom.maxSubagents).toBe(8);
+    expect(custom.subagentIdleMs).toBe(120000);
+
+    // Non-positive MAX_SUBAGENTS falls back to the default (posInt).
+    const bad = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      MAX_SUBAGENTS: "0",
+    } as NodeJS.ProcessEnv);
+    expect(bad.maxSubagents).toBe(5);
+  });
+
   it("throws when a required value is missing", () => {
     expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/Missing required env var/);
   });

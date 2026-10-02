@@ -13,6 +13,7 @@ import { webSearch } from "./web-search.js";
 import type { WebSearchResult } from "./web-search.js";
 import { webFetch } from "./web-fetch.js";
 import type { WebFetchFormat } from "./web-fetch.js";
+import type { SubagentRegistry } from "./subagents.js";
 
 /** Cap how many page images we attach per read, and the max edge length. */
 const MAX_IMAGES_PER_READ = 6;
@@ -335,6 +336,12 @@ export function createAnytypeTools(deps: {
    * sessions, so they cannot spawn further sub-agents.
    */
   runSubagent?: (task: string) => Promise<string>;
+  /**
+   * When set, adds an `agent` tool for persistent, named sub-agents the parent
+   * can spawn once and then message repeatedly. Absent for child sessions, so
+   * they cannot create further agents.
+   */
+  agentRegistry?: SubagentRegistry;
 }): ToolDefinition[] {
   const {
     api,
@@ -353,6 +360,7 @@ export function createAnytypeTools(deps: {
     webFetchMaxChars = 20000,
     runFetch,
     runSubagent,
+    agentRegistry,
   } = deps;
 
   /** The effective web-fetch impl: an injected one, else the Lightpanda-backed default. */
@@ -1459,6 +1467,87 @@ export function createAnytypeTools(deps: {
             return textResult(r.trim() ? r.trim() : "(sub-agent returned no text)");
           } catch (err) {
             return textResult("subagent failed: " + errMessage(err));
+          }
+        },
+      }),
+    );
+  }
+
+  // Persistent, named sub-agents. Only the parent agent gets this tool; child
+  // sessions omit it (no agentRegistry), so they cannot spawn further agents.
+  if (agentRegistry) {
+    tools.push(
+      defineTool({
+        name: "agent",
+        label: "Named persistent sub-agents",
+        description:
+          "Manage DURABLE, NAMED sub-agents you can talk to across multiple turns. " +
+          "`spawn` creates (or returns) a named agent once; then `message` the SAME agent repeatedly — " +
+          "it keeps its own conversation and memory between messages, so you can build up context over " +
+          "several turns instead of re-explaining everything each time. " +
+          "A sub-agent does NOT see THIS chat's conversation, so every `task`/`message` must be a " +
+          "complete, self-contained instruction. " +
+          "Sub-agents cannot spawn further agents. Each spawn/message is a full extra model run and " +
+          "costs tokens, so reuse a named agent rather than spawning many. " +
+          "Actions: `spawn` (needs `name`; optional `task` runs a first message), " +
+          "`message` (needs `name` + `message`), `list`, `kill` (needs `name`).",
+        promptSnippet: "agent — durable named sub-agents: spawn once, then message repeatedly",
+        promptGuidelines: GUIDELINES,
+        parameters: Type.Object({
+          action: Type.Union(
+            [
+              Type.Literal("spawn"),
+              Type.Literal("message"),
+              Type.Literal("list"),
+              Type.Literal("kill"),
+            ],
+            { description: "spawn | message | list | kill" },
+          ),
+          name: Type.Optional(
+            Type.String({ description: "Sub-agent name (required for spawn/message/kill)." }),
+          ),
+          task: Type.Optional(
+            Type.String({ description: "For spawn: an optional first, self-contained task to run immediately." }),
+          ),
+          message: Type.Optional(
+            Type.String({ description: "For message: the self-contained message to send to the named agent." }),
+          ),
+        }),
+        async execute(_toolCallId, params) {
+          try {
+            switch (params.action) {
+              case "spawn": {
+                if (!params.name) return textResult("agent failed: `name` is required for spawn");
+                await agentRegistry.spawn(params.name);
+                if (params.task) return textResult(await agentRegistry.message(params.name, params.task));
+                return textResult(`已创建子代理「${params.name}」`);
+              }
+              case "message": {
+                if (!params.name) return textResult("agent failed: `name` is required for message");
+                if (!params.message) return textResult("agent failed: `message` is required for message");
+                return textResult(await agentRegistry.message(params.name, params.message));
+              }
+              case "list": {
+                const items = agentRegistry.list();
+                if (items.length === 0) return textResult("(no sub-agents)");
+                return textResult(
+                  items
+                    .map((a) => `- ${a.name} (${a.busy ? "busy" : "idle"}) — last: ${(a.lastResult ?? "").slice(0, 60)}`)
+                    .join("\n"),
+                );
+              }
+              case "kill": {
+                if (!params.name) return textResult("agent failed: `name` is required for kill");
+                const existed = agentRegistry.kill(params.name);
+                return textResult(
+                  existed ? `已删除子代理「${params.name}」` : `没有名为「${params.name}」的子代理`,
+                );
+              }
+              default:
+                return textResult("agent failed: unknown action");
+            }
+          } catch (err) {
+            return textResult("agent failed: " + errMessage(err));
           }
         },
       }),

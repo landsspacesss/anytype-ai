@@ -47,6 +47,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webFetchMaxChars: posInt(env, "WEB_FETCH_MAX_CHARS", 20000),
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),
     idleReapMs: num(env, "IDLE_REAP_MS", 900000),
+    // Named sub-agents (the `agent` tool): cap live agents per parent session
+    // and lazily reap idle ones after this many ms.
+    maxSubagents: posInt(env, "MAX_SUBAGENTS", 5),
+    subagentIdleMs: num(env, "SUBAGENT_IDLE_MS", 900000),
     replyMaxLen: posInt(env, "REPLY_MAX_LEN", 4000),
     watchTickMs: posInt(env, "WATCH_TICK_MS", 60000),
     watchDefaultCron: env.WATCH_DEFAULT_CRON || "*/30 * * * *",
