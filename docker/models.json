@@ -1,0 +1,25 @@
+{
+  "providers": {
+    "deepseek": {
+      "api": "openai-completions",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "DeepSeek V4.1 Flash",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "cost": { "input": 0.435, "output": 0.87, "cacheRead": 0.003625, "cacheWrite": 0 },
+          "compat": {
+            "requiresReasoningContentOnAssistantMessages": true,
+            "thinkingFormat": "deepseek"
+          },
+          "thinkingLevelMap": { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" }
+        }
+      ]
+    }
+  }
+}

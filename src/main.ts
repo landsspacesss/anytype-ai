@@ -1,10 +1,11 @@
 import path from "node:path";
+import os from "node:os";
 import { loadConfig } from "./config.js";
 import { AnytypeClient } from "./anytype/client.js";
 import { resolveBotParticipantId } from "./anytype/members.js";
 import { extractDiscussionId } from "./anytype/discussion.js";
 import { subscribeChat } from "./anytype/stream.js";
-import { createPiClient, ensureAgentFiles } from "./agent/pi-session.js";
+import { createPiClient, ensureAgentFiles, ensureModelsConfig } from "./agent/pi-session.js";
 import { SessionManager } from "./session/manager.js";
 import { Router } from "./router/router.js";
 import { ReplySink } from "./reply/sink.js";
@@ -24,6 +25,10 @@ interface ChatInfo {
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  // Register the custom model (DeepSeek V4.1 = `deepseek-flash`) into pi's agent
+  // dir. The dir is a volume mount, so this can't be baked into the image.
+  const agentDir = cfg.piAgentDir ?? path.join(os.homedir(), ".pi", "agent");
+  ensureModelsConfig(agentDir);
   const api = new AnytypeClient({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey });
   const controller = new AbortController();
 
@@ -40,7 +45,7 @@ async function main(): Promise<void> {
       // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
       // (pi auto-loads AGENTS.md from cwd at session creation).
       ensureAgentFiles(dir);
-      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir, api, spaceId });
+      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir, api, spaceId, modelId: cfg.piModel });
     },
   });
 

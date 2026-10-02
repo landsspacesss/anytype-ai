@@ -39,6 +39,8 @@ export interface Config {
   agentWorkspaceRoot: string;
   /** Optional global pi config dir (env PI_AGENT_DIR); unset -> pi's ~/.pi/agent. */
   piAgentDir?: string;
+  /** Model id to run the agent with (env PI_MODEL). Default: deepseek-flash (V4.1). */
+  piModel: string;
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;

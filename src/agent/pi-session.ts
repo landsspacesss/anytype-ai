@@ -19,6 +19,38 @@ export interface PiClientOptions {
   api: AnytypeClient;
   /** The Anytype space this agent lives in. */
   spaceId: string;
+  /** Model id to use (e.g. "deepseek-flash"). Defaults to pi's own default. */
+  modelId?: string;
+}
+
+/** Where the baked-in custom model registry lives in the image. */
+const MODELS_SRC = "/app/pi/models.json";
+
+/**
+ * Copy the custom model registry (docker/models.json) into pi's agent dir if it
+ * isn't there yet. The agent dir is a volume mount, so a baked-in file at that
+ * path would be shadowed — we copy it in at startup instead.
+ */
+export function ensureModelsConfig(agentDir: string, srcPath: string = MODELS_SRC): void {
+  try {
+    fs.mkdirSync(agentDir, { recursive: true });
+    const dest = path.join(agentDir, "models.json");
+    if (!fs.existsSync(dest) && fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, dest);
+      console.log(`wrote model registry: ${dest}`);
+    }
+  } catch (err) {
+    console.warn(`ensureModelsConfig failed: ${String(err)}`);
+  }
+}
+
+/** Find a model by id, preferring the deepseek provider. */
+function resolveModel(registry: ModelRegistry, modelId: string): unknown | undefined {
+  const all = (registry as unknown as { getAll?: () => Array<{ id: string; provider?: string }> }).getAll?.() ?? [];
+  return (
+    all.find((m) => m.id === modelId && m.provider === "deepseek") ??
+    all.find((m) => m.id === modelId)
+  );
 }
 
 /**
@@ -32,6 +64,10 @@ export interface PiClientOptions {
 export async function createPiClient(opts: PiClientOptions): Promise<ManagedClient> {
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+  const model = opts.modelId ? resolveModel(modelRegistry, opts.modelId) : undefined;
+  if (opts.modelId && !model) {
+    console.warn(`pi model "${opts.modelId}" not found in registry; using pi default`);
+  }
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     agentDir: opts.agentDir,
@@ -39,6 +75,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     modelRegistry,
     sessionManager: SessionManager.inMemory(),
     customTools: createAnytypeTools({ api: opts.api, spaceId: opts.spaceId }),
+    ...(model ? { model: model as never } : {}),
   });
 
   let collected = "";

@@ -44,6 +44,21 @@ describe("loadConfig", () => {
     expect(cfg.botParticipantId).toBe("");
   });
 
+  it("defaults piModel to deepseek-flash (V4.1) and honors PI_MODEL", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.piModel).toBe("deepseek-flash");
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      PI_MODEL: "deepseek-v4-pro",
+    } as NodeJS.ProcessEnv);
+    expect(custom.piModel).toBe("deepseek-v4-pro");
+  });
+
   it("reads BOT_DISPLAY_NAME and defaults to anytype-bot", () => {
     const custom = loadConfig({
       ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",

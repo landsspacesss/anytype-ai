@@ -39,6 +39,10 @@ WORKDIR /app
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# Custom model registry (adds DeepSeek V4.1 / `deepseek-flash`, which pi's
+# built-in table predates). Copied into the agent dir at startup, because the
+# agent dir is a volume mount that would otherwise shadow a baked-in file.
+COPY docker/models.json /app/pi/models.json
 
 # Writable dirs: /workspace holds the per-space agent workspace volume;
 # /root/.pi/agent is pi's global config/auth dir (never baked credentials in).
