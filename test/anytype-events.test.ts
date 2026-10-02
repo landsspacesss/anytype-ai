@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { normalizeMessage, hasMentionOf, parseSseChunk } from "../src/anytype/events.js";
 
 const BOT_PID =
-  "_participant_bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe_2reb8xis4pogu_A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm";
+  "_participant_<id>pqdthe_2reb8xis4pogu_BOTIDENTITY_PLACEHOLDER_xxxxxxxxxxxxxxxxx";
 
 describe("normalizeMessage", () => {
   it("marks a message mentioning the bot by its participant id", () => {

@@ -19,7 +19,7 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
   const base = {
     listObjects: vi.fn(async () => [
       { id: "obj1", name: "日常试卷1", type: "page" },
-      { id: "obj2", name: "考试大纲", type: "page" },
+      { id: "obj2", name: "Outline", type: "page" },
     ]),
     listObjectsOfType: vi.fn(async () => [
       { id: "img1", name: "IMG_4127", type: "image" },
@@ -99,7 +99,7 @@ async function run(tool: { execute: (...a: unknown[]) => unknown }, params: unkn
   return (await (tool.execute as Function)("call-1", params, undefined, undefined, {})) as ExecResult;
 }
 
-const SPACE = "pqdthe";
+const SPACE = "sp-abc";
 const CHAT = "chat-42";
 const DEFAULT_CRON = "*/30 * * * *";
 
@@ -331,7 +331,7 @@ describe("createAnytypeTools", () => {
     expect(api.listObjects).toHaveBeenCalledWith(SPACE);
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
-    expect(text).toContain("考试大纲");
+    expect(text).toContain("Outline");
     expect(text).toContain("(page)");
     expect(text).toContain("obj1");
     expect(res.details).toEqual({});
@@ -354,7 +354,7 @@ describe("createAnytypeTools", () => {
     const res = await run(toolByName(tools, "anytype_list_objects"), { limit: 1 });
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
-    expect(text).not.toContain("考试大纲");
+    expect(text).not.toContain("Outline");
   });
 
   it("filters out chats and system objects from list and search", async () => {

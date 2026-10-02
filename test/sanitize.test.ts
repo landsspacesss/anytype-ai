@@ -3,8 +3,8 @@ import { sanitize } from "../src/util/sanitize.js";
 
 describe("sanitize", () => {
   it("leaves filesystem-safe base32-ish ids unchanged", () => {
-    expect(sanitize("pqdthe")).toBe("pqdthe");
-    expect(sanitize("A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZ")).toBe("A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZ");
+    expect(sanitize("sp-abc")).toBe("sp-abc");
+    expect(sanitize("BOTIDENTITY_PLACEHOLDER_xxxxxxxx")).toBe("BOTIDENTITY_PLACEHOLDER_xxxxxxxx");
     expect(sanitize("a.b_c-d")).toBe("a.b_c-d");
   });
 

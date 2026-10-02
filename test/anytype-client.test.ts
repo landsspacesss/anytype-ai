@@ -29,7 +29,7 @@ describe("AnytypeClient.listSpaces", () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
-          JSON.stringify({ data: [{ id: "7lotza", name: "" }, { id: "pqdthe", name: "考试" }], total: 2 }),
+          JSON.stringify({ data: [{ id: "sp-xyz", name: "" }, { id: "sp-abc", name: "My Space" }], total: 2 }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
     );
@@ -38,7 +38,7 @@ describe("AnytypeClient.listSpaces", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://x/v2/spaces");
     expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer k");
-    expect(spaces).toEqual([{ id: "7lotza", name: "" }, { id: "pqdthe", name: "考试" }]);
+    expect(spaces).toEqual([{ id: "sp-xyz", name: "" }, { id: "sp-abc", name: "My Space" }]);
   });
 
   it("returns [] when data is absent and throws on non-2xx", async () => {

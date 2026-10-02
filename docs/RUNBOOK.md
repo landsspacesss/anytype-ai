@@ -129,12 +129,12 @@ DEEPSEEK_API_KEY=sk-...      # 当前用的
 
 查看某空间的记忆：
 ```bash
-docker exec anytype-ai-bot-1 cat /workspace/pqdthe/MEMORY.md
+docker exec anytype-ai-bot-1 cat /workspace/<space-id>/MEMORY.md
 ```
 
 **改提示词**（比如调整记忆策略、身份描述）：改 `src/agent/pi-session.ts` 里 `ensureAgentFiles()` 的模板 → 重新部署。注意它**只在 AGENTS.md 不存在时才写**，已存在的空间需手动更新：
 ```bash
-docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模板.md
+docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新模板.md
 ```
 
 **聊天输出纯文本**：AGENTS.md 模板里有一段"聊天输出格式"，要求 bot 在**聊天里发纯文本、不要 Markdown**（标题/粗体/表格/链接等——Anytype 聊天不渲染，会原样显示）。但**写进页面正文**（create_note/insert_markdown）仍用规范 Markdown。想改这条规则就改模板里那段。
@@ -218,12 +218,12 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 
 | 项 | 值 |
 |---|---|
-| bot 账号身份 | `A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm` |
+| bot 账号身份 | `<bot-identity>` |
 | bot 显示名 | `anytype-bot` |
 | anytype-cli API | `http://127.0.0.1:31012`（容器内经共享 netns；主机经 `127.0.0.1:31012`） |
 | anytype-cli 容器 | `anytype-anytype-cli-1` |
 | bot 容器 | `anytype-ai-bot-1` |
-| 测试空间 | `考试`（API id `pqdthe`） |
+| 测试空间 | `<space-name>`（API id `<space-id>`） |
 
 ---
 

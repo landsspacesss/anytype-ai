@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveBotParticipantId } from "../src/anytype/members.js";
 
 const BOT_IDENTITY =
-  "A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm";
+  "BOTIDENTITY_PLACEHOLDER_xxxxxxxxxxxxxxxxx";
 
 describe("resolveBotParticipantId", () => {
   it("returns the participant id of the member whose identity matches", () => {

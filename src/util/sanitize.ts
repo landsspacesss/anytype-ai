@@ -3,7 +3,7 @@
  * segment: replace anything outside `[A-Za-z0-9._-]` with `_`, then cap the
  * length so a pathological id cannot blow past filesystem name limits.
  *
- * Ids we see in practice are base32-ish (`pqdthe`, `A7D1k…`) and pass through
+ * Ids we see in practice are base32-ish (`sp-abc`, `BOTID_PLACEHOLDER) and pass through
  * unchanged; this is a guard for anything unexpected.
  */
 export function sanitize(s: string, maxLen = 80): string {

@@ -1,0 +1,21 @@
+Anytype AI Bot
+Copyright 2025 landsspacesss
+
+This product includes software developed by third parties:
+
+- @earendil-works/pi-coding-agent (https://github.com/earendil-works/pi)
+  Licensed under the MIT License.
+
+- Lightpanda (https://github.com/lightpanda-io/browser)
+  Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+  NOTE: The Lightpanda browser is NOT bundled in this source repository; it is
+  downloaded at container build time (see the Dockerfile) and runs as a separate
+  process invoked over its CLI. If you distribute a prebuilt image containing
+  Lightpanda, you must also comply with AGPL-3.0 for that program (include its
+  license and a source offer/link).
+
+- sharp (https://github.com/lovell/sharp) — Apache-2.0
+- typebox (https://github.com/sinclairzx81/typebox) — MIT
+
+Full dependency license texts are available from their respective distributions
+(e.g. node_modules/<package>/LICENSE).

@@ -15,7 +15,7 @@ the bot must be **invited into a user space** (see below).
   `/home/landspace/anytype/docker-compose.yml`. Bootstrap exits 0; `anytype-cli` is
   `Up (healthy)`.
 - Bot account created. **Account name:** `anytype-bot`. **Identity:**
-  `A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm`.
+  `<bot-identity>`.
 
 ### API key
 - Created with `anytype auth apikey create ai-bot --all-spaces --read-write` (run inside
@@ -41,8 +41,8 @@ internet still works (`api.github.com` → 200).
   publish its host ports on `127.0.0.1` only (debug access; not exposed to the LAN).
 
 ### API shapes discovered (drive Task 8 / Task 10 / Task 12)
-- `GET /v2/spaces` → `{"data":[{"id":"7lotza","name":""}],"total":1,...}` — the **space id is
-  the short form `7lotza`** (not the long `bafyrei…​.ul3mpmpp76eu` the CLI's `space list`
+- `GET /v2/spaces` → `{"data":[{"id":"<space-id>","name":""}],"total":1,...}` — the **space id is
+  the short form `<space-id>`** (not the long `bafyrei…​.ul3mpmpp76eu` the CLI's `space list`
   prints). Client code must use the id the API returns.
 - `GET /v2/spaces/{id}/members` → `{"data":[{"id":"_participant_<fullSpaceId>_<identity>",
   "name":"anytype-bot","role":"owner","identity":"<identity>"}]}`. So a member's
@@ -56,12 +56,12 @@ For the bot to be @-mentioned it must be a member of a space the user is also in
 **invite `anytype-bot` into a user space**, or have the user join the bot's space. Until then
 Tasks 10/12 can be built but not exercised end-to-end.
 
-**UPDATE 2026-10-02 — resolved.** The bot joined the user's space **考试** (API id
-`pqdthe`; full id `bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe.2reb8xis4pogu`)
-as **editor**. The user's identity there is `AA5HkDmFVBCRDKWxLHiqCLKxQ38AsMXLr2swGmDBURPJQTTF`
+**UPDATE 2026-10-02 — resolved.** The bot joined the user's space **<space-name>** (API id
+`<space-id>`; full id `<space-full-id>`)
+as **editor**. The user's identity there is `<owner-identity>`
 (the same identity as the iPhone configured with `client.yml` — this space **is** on the
 self-hosted network, confirming everything is on one network). A second space **emotions**
-(`bafyreiffm3aoqldgxk6vsax425rmmzccy3njjwlpgdobahkyvqqbchc5f4.2reb8xis4pogu`) had a join
+(`<id>.2reb8xis4pogu`) had a join
 request sent, pending user approval.
 
 ### Global-workspace question (answered)
@@ -73,7 +73,7 @@ covers every space the bot is a member of (including ones joined later). No glob
 
 ### ⚠️ Design correction — participant id is SPACE-SCOPED
 A member's `id` is `_participant_<fullSpaceId>_<identity>`:
-- 考试/anytype-bot → `_participant_bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe_2reb8xis4pogu_A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm`
+- <space-name>/anytype-bot → `_participant_<id><space-id>_2reb8xis4pogu_<bot-identity>`
 
 So the bot's participant id **differs per space**; a single `BOT_PARTICIPANT_ID` constant is
 wrong for multi-space. **Task 12 must resolve the bot's participant id per space** by
@@ -210,8 +210,8 @@ unverified.
 
 ## Task 0.2 — Real event shape & mention format (VERIFIED 2026-10-02)
 
-Captured live: bot created chat `ai-bot-test` (id `bafyreibqmhogv6b76uxz2cgnsuzp4xlhl6mzp5h4ihxowvnbh3ywt36y6u`)
-in space 考试 (`pqdthe`), posted a message, then the user posted a real @-mention.
+Captured live: bot created chat `ai-bot-test` (id `<id>`)
+in space <space-name> (`<space-id>`), posted a message, then the user posted a real @-mention.
 
 ### SSE event envelope (per chat stream)
 Each event is 3 SSE lines + blank separator:
@@ -228,10 +228,10 @@ dispatch on the parsed object's `type` and pass `data.message` (not the wrapper)
 
 ### ChatMessage shape (CORRECTS the plan's assumption)
 ```json
-{"id":"bafyreif...","order":"!!'P","author":"Zappy Porcupine",
- "author_id":"_participant_bafyreia3tvojsim3dcxu6amtct5m2pjriwcj52tlpmgcrdwk7nrypqdthe_2reb8xis4pogu_AA5Hk...",
+{"id":"bafyreif...","order":"!!'P","author":"<user>",
+ "author_id":"_participant_<id><space-id>_2reb8xis4pogu_<owner-id>",
  "at":"2026-10-01T17:18:17Z",
- "text":"<mention object_id=\"_participant_..._A7D1k...\">anytype-bot</mention> hello"}
+ "text":"<mention object_id=\"_participant_..._<bot-id>\">anytype-bot</mention> hello"}
 ```
 - The author field is **`author_id`** (participant id), NOT `creator`. (Plan's `normalizeMessage`
   used `creator` and a `mentions[]` array — both WRONG.)

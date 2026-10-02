@@ -137,9 +137,9 @@ describe("loadConfig", () => {
     const cfg = loadConfig({
       ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
       ANYTYPE_API_KEY: "k",
-      BOT_IDENTITY: "A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm",
+      BOT_IDENTITY: "BOTIDENTITY_PLACEHOLDER_xxxxxxxxxxxxxxxxx",
     } as NodeJS.ProcessEnv);
-    expect(cfg.botIdentity).toBe("A7D1kUBFSFfs7jBbTgFZ2uvp2Eo2eSpZWpjt52X41rMqZHPm");
+    expect(cfg.botIdentity).toBe("BOTIDENTITY_PLACEHOLDER_xxxxxxxxxxxxxxxxx");
     expect(cfg.botParticipantId).toBe("");
   });
 
