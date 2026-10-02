@@ -2,6 +2,7 @@ import path from "node:path";
 import { loadConfig } from "./config.js";
 import { AnytypeClient } from "./anytype/client.js";
 import { resolveBotParticipantId } from "./anytype/members.js";
+import { extractDiscussionId } from "./anytype/discussion.js";
 import { subscribeChat } from "./anytype/stream.js";
 import { createPiClient, ensureAgentFiles } from "./agent/pi-session.js";
 import { SessionManager } from "./session/manager.js";
@@ -64,7 +65,8 @@ async function main(): Promise<void> {
   // backlog we must not answer. One shared timestamp keeps every subscription
   // consistent regardless of discovery order.
   const startedAt = new Date().toISOString();
-  const subscribed = new Set<string>(); // chat ids already subscribed
+  const subscribed = new Set<string>(); // chat/discussion ids already subscribed
+  const checkedObjects = new Set<string>(); // object ids whose discussion we've examined
 
   // Discover spaces -> chats and subscribe to any chat not yet subscribed.
   // Runs at startup AND periodically, so chats created after boot are picked up
@@ -118,8 +120,47 @@ async function main(): Promise<void> {
           );
           console.log(`subscribed space=${space.id} chat=${chat.id} direct=${isDirect}`);
         }
+
+        // Page/object Discussions are chats too, but `listChats` does not include
+        // them — discover them from the object list (each object exposes its
+        // discussion id). Each discussion gets its own chat_id, so it is its own
+        // conversation context. Only real objects hold a discussion, so absent
+        // ids are simply skipped.
+        const objects = await api.listObjects(space.id).catch((err) => {
+          console.warn(`listObjects failed for space ${space.id}: ${String(err)}`);
+          return [];
+        });
+        for (const obj of objects) {
+          if (checkedObjects.has(obj.id)) continue;
+          checkedObjects.add(obj.id);
+          const doc = await api.getObjectRaw(space.id, obj.id).catch(() => null);
+          const discussionId = extractDiscussionId(doc);
+          if (!discussionId || subscribed.has(discussionId)) continue;
+          subscribed.add(discussionId);
+          chatTargets.set(discussionId, {
+            spaceId: space.id,
+            chatId: discussionId,
+            objectId: obj.id,
+            isDirect: false,
+          });
+          void subscribeChat(
+            {
+              baseUrl: cfg.apiBaseUrl,
+              apiKey: cfg.apiKey,
+              spaceId: space.id,
+              chatId: discussionId,
+              isDirect: false,
+              objectId: obj.id,
+              botParticipantId,
+              since: startedAt,
+              onEvent,
+            },
+            controller.signal,
+          );
+          console.log(`subscribed discussion object=${obj.id} chat=${discussionId}`);
+        }
       }
-      console.log(`discovery: ${chatTargets.size} chat(s) subscribed`);
+      console.log(`discovery: ${chatTargets.size} chat(s)/discussion(s) subscribed`);
     } finally {
       discovering = false;
     }
