@@ -9,6 +9,8 @@ import { createPiClient, ensureAgentFiles, ensureModelsConfig } from "./agent/pi
 import { SessionManager } from "./session/manager.js";
 import { Router } from "./router/router.js";
 import { ReplySink } from "./reply/sink.js";
+import { WatchStore } from "./watch/store.js";
+import { pollWatches } from "./watch/poller.js";
 import type { NormalizedEvent } from "./types.js";
 
 /** Agent memory scope is per-SPACE: one workspace directory per space id. */
@@ -36,6 +38,12 @@ async function main(): Promise<void> {
   // workspace, so this map must be filled before any event can arrive.
   const chatTargets = new Map<string, ChatInfo>();
 
+  // Durable object-change subscriptions, persisted under the workspace root so
+  // they survive restarts. Loaded once at boot; the poll loop below keeps them
+  // fresh. (Anytype has no object event stream, so we poll + diff.)
+  const watchStore = new WatchStore(path.join(cfg.agentWorkspaceRoot, "watches.json"));
+  watchStore.load();
+
   const sessions = new SessionManager({
     maxConcurrent: cfg.maxConcurrentSessions,
     idleMs: cfg.idleReapMs,
@@ -45,7 +53,15 @@ async function main(): Promise<void> {
       // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
       // (pi auto-loads AGENTS.md from cwd at session creation).
       ensureAgentFiles(dir);
-      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir, api, spaceId, modelId: cfg.piModel });
+      return createPiClient({
+        cwd: dir,
+        agentDir: cfg.piAgentDir,
+        api,
+        spaceId,
+        store: watchStore,
+        chatId,
+        modelId: cfg.piModel,
+      });
     },
   });
 
@@ -210,10 +226,30 @@ async function main(): Promise<void> {
     void sessions.reapIdle();
   }, Math.min(cfg.idleReapMs, 60000));
 
+  // Poll watched objects and notify their originating chat on change. Overlapping
+  // runs are skipped (same guard style as `discovering`). A freshly added watch
+  // is already baselined by the tool, so it does not notify on the first poll.
+  let polling = false;
+  const watchTimer = setInterval(() => {
+    if (polling) return;
+    polling = true;
+    void pollWatches({
+      store: watchStore,
+      api,
+      notify: (rec, text) =>
+        api.sendMessage(rec.spaceId, rec.chatId, text, `watch-${rec.objectId}-${Date.now()}`),
+    })
+      .catch((err) => console.warn(`watch poll failed: ${String(err)}`))
+      .finally(() => {
+        polling = false;
+      });
+  }, cfg.watchPollMs);
+
   const shutdown = async (): Promise<void> => {
     controller.abort();
     clearInterval(reaper);
     clearInterval(discoverTimer);
+    clearInterval(watchTimer);
     await sessions.shutdown();
     process.exit(0);
   };

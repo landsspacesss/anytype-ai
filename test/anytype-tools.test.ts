@@ -5,6 +5,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { createAnytypeTools } from "../src/agent/anytype-tools.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
+import type { WatchStore, WatchRecord } from "../src/watch/store.js";
 
 /** A throwaway workspace dir for tool tests. */
 function tmpWorkspace(): string {
@@ -50,6 +51,29 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
   return { ...base, ...overrides } as unknown as AnytypeClient;
 }
 
+/** A minimal fake WatchStore for tool tests (records vi.fn calls). */
+function fakeStore(): WatchStore & {
+  upsert: ReturnType<typeof vi.fn>;
+  remove: ReturnType<typeof vi.fn>;
+  forSpace: ReturnType<typeof vi.fn>;
+  save: ReturnType<typeof vi.fn>;
+} {
+  return {
+    load: vi.fn(),
+    all: vi.fn(() => []),
+    forSpace: vi.fn(() => []),
+    get: vi.fn(),
+    upsert: vi.fn(),
+    remove: vi.fn(() => true),
+    save: vi.fn(),
+  } as unknown as WatchStore & {
+    upsert: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+    forSpace: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+  };
+}
+
 function toolByName(tools: ReturnType<typeof createAnytypeTools>, name: string) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`tool ${name} not found`);
@@ -61,15 +85,16 @@ async function run(tool: { execute: (...a: unknown[]) => unknown }, params: unkn
 }
 
 const SPACE = "pqdthe";
+const CHAT = "chat-42";
 
-function mkTools(api: AnytypeClient) {
-  return createAnytypeTools({ api, spaceId: SPACE, workspaceDir: tmpWorkspace() });
+function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: string = CHAT) {
+  return createAnytypeTools({ api, spaceId: SPACE, workspaceDir: tmpWorkspace(), store, chatId });
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the eighteen Anytype tools with expected names", () => {
+  it("returns the nineteen Anytype tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(19);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -89,6 +114,7 @@ describe("createAnytypeTools", () => {
       "anytype_create_collection",
       "anytype_collection_items",
       "anytype_upload_file",
+      "anytype_watch",
     ]);
   });
 
@@ -262,7 +288,13 @@ describe("createAnytypeTools", () => {
     const ws = tmpWorkspace();
     const file = path.join(ws, "img.png");
     fs.writeFileSync(file, png);
-    const tools = createAnytypeTools({ api: fakeApi(), spaceId: SPACE, workspaceDir: ws });
+    const tools = createAnytypeTools({
+      api: fakeApi(),
+      spaceId: SPACE,
+      workspaceDir: ws,
+      store: fakeStore(),
+      chatId: CHAT,
+    });
 
     const cropped = await run(toolByName(tools, "crop_image"), { path: file, x: 0, y: 0, width: 0.5, height: 0.5 });
     const img = cropped.content.find((c) => c.type === "image");
@@ -644,5 +676,96 @@ describe("createAnytypeTools", () => {
     expect(api.search).not.toHaveBeenCalled();
     expect(api.filteredSearch).not.toHaveBeenCalled();
     expect(res.content[0].text).toMatch(/query.*filters|filters.*query/);
+  });
+
+  it("anytype_watch add baselines a snapshot and records chatId + spaceId", async () => {
+    const api = fakeApi();
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(api, store), "anytype_watch"), { action: "add", id: "obj1" });
+    expect(api.getObjectRaw).toHaveBeenCalledWith(SPACE, "obj1");
+    expect(store.upsert).toHaveBeenCalledTimes(1);
+    const rec = store.upsert.mock.calls[0][0] as WatchRecord;
+    expect(rec).toEqual({
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [
+        { id: "b1", text: "第一段内容" },
+        { id: "b2", text: "" },
+        { id: "b3", text: "第二段内容" },
+      ],
+    });
+    expect(store.save).toHaveBeenCalled();
+    expect(res.content[0].text).toContain("已订阅");
+    expect(res.content[0].text).toContain("日常试卷1");
+  });
+
+  it("anytype_watch add honors an explicit label", async () => {
+    const store = fakeStore();
+    await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      label: "我的订阅",
+    });
+    expect((store.upsert.mock.calls[0][0] as WatchRecord).label).toBe("我的订阅");
+  });
+
+  it("anytype_watch add requires an id", async () => {
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), { action: "add" });
+    expect(store.upsert).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/id/);
+  });
+
+  it("anytype_watch remove unsubscribes and saves", async () => {
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "remove",
+      id: "obj1",
+    });
+    expect(store.remove).toHaveBeenCalledWith(SPACE, "obj1");
+    expect(store.save).toHaveBeenCalled();
+    expect(res.content[0].text).toContain("已取消订阅");
+  });
+
+  it("anytype_watch remove reports when nothing was subscribed", async () => {
+    const store = fakeStore();
+    store.remove = vi.fn(() => false);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "remove",
+      id: "nope",
+    });
+    expect(store.save).not.toHaveBeenCalled();
+    expect(res.content[0].text).toContain("没有找到");
+  });
+
+  it("anytype_watch list renders label + id + chat", async () => {
+    const store = fakeStore();
+    store.forSpace = vi.fn(() => [
+      { objectId: "obj1", spaceId: SPACE, chatId: CHAT, label: "日常试卷1", snapshot: [] },
+    ]);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), { action: "list" });
+    expect(store.forSpace).toHaveBeenCalledWith(SPACE);
+    const text = res.content[0].text;
+    expect(text).toContain("日常试卷1");
+    expect(text).toContain("obj1");
+    expect(text).toContain(CHAT);
+  });
+
+  it("anytype_watch list reports an empty subscription set", async () => {
+    const res = await run(toolByName(mkTools(fakeApi(), fakeStore()), "anytype_watch"), { action: "list" });
+    expect(res.content[0].text).toContain("没有任何订阅");
+  });
+
+  it("anytype_watch surfaces client failures as text instead of throwing", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => {
+        throw new Error("getObjectRaw failed: 404");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_watch"), { action: "add", id: "gone" });
+    expect(res.content[0].text).toContain("anytype_watch failed");
+    expect(res.content[0].text).toContain("404");
   });
 });

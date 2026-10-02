@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ManagedClient } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
+import type { WatchStore } from "../watch/store.js";
 import { createAnytypeTools } from "./anytype-tools.js";
 
 export interface PiClientOptions {
@@ -19,6 +20,10 @@ export interface PiClientOptions {
   api: AnytypeClient;
   /** The Anytype space this agent lives in. */
   spaceId: string;
+  /** Durable object-change subscriptions shared across sessions. */
+  store: WatchStore;
+  /** The chat this session belongs to — watch notifications go back here. */
+  chatId: string;
   /** Model id to use (e.g. "deepseek-flash"). Defaults to pi's own default. */
   modelId?: string;
 }
@@ -74,7 +79,13 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     authStorage,
     modelRegistry,
     sessionManager: SessionManager.inMemory(),
-    customTools: createAnytypeTools({ api: opts.api, spaceId: opts.spaceId, workspaceDir: opts.cwd }),
+    customTools: createAnytypeTools({
+      api: opts.api,
+      spaceId: opts.spaceId,
+      workspaceDir: opts.cwd,
+      store: opts.store,
+      chatId: opts.chatId,
+    }),
     ...(model ? { model: model as never } : {}),
   });
 

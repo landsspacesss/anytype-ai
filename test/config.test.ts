@@ -16,6 +16,23 @@ describe("loadConfig", () => {
     expect(cfg.maxConcurrentSessions).toBe(3);
     expect(cfg.idleReapMs).toBe(900000);
     expect(cfg.replyMaxLen).toBe(4000);
+    expect(cfg.watchPollMs).toBe(120000);
+  });
+
+  it("reads WATCH_POLL_MS and falls back for a non-positive value", () => {
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      WATCH_POLL_MS: "5000",
+    } as NodeJS.ProcessEnv);
+    expect(custom.watchPollMs).toBe(5000);
+
+    const bad = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      WATCH_POLL_MS: "0",
+    } as NodeJS.ProcessEnv);
+    expect(bad.watchPollMs).toBe(120000);
   });
 
   it("throws when a required value is missing", () => {

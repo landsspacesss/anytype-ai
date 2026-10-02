@@ -5,6 +5,8 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import sharp from "sharp";
 import type { AnytypeClient } from "../anytype/client.js";
+import type { WatchStore } from "../watch/store.js";
+import { snapshotOf } from "../watch/store.js";
 
 /** Cap how many page images we attach per read, and the max edge length. */
 const MAX_IMAGES_PER_READ = 6;
@@ -135,6 +137,16 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** An object's display name, tolerating the post-patch 1-element array shape. */
+function objectName(doc: unknown): string {
+  if (doc === null || typeof doc !== "object") return "";
+  const props = (doc as Record<string, unknown>).properties;
+  if (props === null || typeof props !== "object") return "";
+  const raw = (props as Record<string, unknown>).name;
+  const s = Array.isArray(raw) ? raw[0] : raw;
+  return typeof s === "string" ? s : "";
+}
+
 /** Image blocks in a document: their file object id + mime type. */
 function extractImages(doc: unknown): Array<{ objectId: string; mimeType: string }> {
   if (doc === null || typeof doc !== "object") return [];
@@ -178,6 +190,7 @@ const GUIDELINES = [
   "For ANYTHING about the user's notes, pages, objects, or other content (including questions like \"how many notes are there?\" or \"find my note about X\"), ALWAYS use the `anytype_*` tools instead of listing/reading local workspace files.",
   "Never assume the words \"notes\" or \"笔记\" refer to local files — in this environment they mean Anytype objects in the current space.",
   "For pages that are scans/photos (试卷, receipts, screenshots): read the downscaled overview first, then use `anytype_download_images` + `crop_image` to zoom into a region. Cropping a small region at full resolution is how you read small or handwritten detail.",
+  "When the user asks to be notified/watched when a note or object changes (e.g. \"订阅\", \"watch\", \"notify me when it changes\"), use `anytype_watch` with action \"add\" and the object id. The bot then polls the object and posts a notification into this chat whenever its content changes.",
 ];
 
 /**
@@ -190,8 +203,14 @@ export function createAnytypeTools(deps: {
   spaceId: string;
   /** Directory the agent may write downloaded images into. */
   workspaceDir: string;
+  /** Durable set of object-change subscriptions (anytype_watch). */
+  store: WatchStore;
+  /** The chat this session belongs to — watch notifications are sent back here. */
+  chatId: string;
+  /** Called after a watch is added/removed (e.g. to trigger an immediate poll). */
+  onWatchChange?: () => void;
 }): ToolDefinition[] {
-  const { api, spaceId, workspaceDir } = deps;
+  const { api, spaceId, workspaceDir, store, chatId, onWatchChange } = deps;
 
   /** Where a page's downloaded images live. */
   const imagesDirFor = (objectId: string): string =>
@@ -775,6 +794,60 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const watch = defineTool({
+    name: "anytype_watch",
+    label: "Subscribe to object changes",
+    description:
+      "Subscribe this chat to changes on an Anytype object (a note/page). When the object's content changes, the bot posts a notification into this chat. Use action \"add\" (with `id`) to subscribe, \"remove\" (with `id`) to unsubscribe, or \"list\" to show the space's current subscriptions. Subscriptions survive restarts.",
+    promptSnippet: "anytype_watch — subscribe to (or list/remove) notifications when an object changes",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      action: Type.String({ description: "One of: add, remove, list." }),
+      id: Type.Optional(Type.String({ description: "The object id to watch (required for add/remove)." })),
+      label: Type.Optional(Type.String({ description: "Optional human label for the subscription." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        if (params.action === "add") {
+          if (!params.id) return textResult("anytype_watch: `id` is required for action \"add\".");
+          const doc = await api.getObjectRaw(spaceId, params.id);
+          const label = params.label ?? objectName(doc);
+          store.upsert({
+            objectId: params.id,
+            spaceId,
+            chatId,
+            label: label || params.id,
+            snapshot: snapshotOf(doc),
+          });
+          store.save();
+          onWatchChange?.();
+          return textResult(`已订阅『${label || params.id}』，内容变化时会在这里通知你`);
+        }
+        if (params.action === "remove") {
+          if (!params.id) return textResult("anytype_watch: `id` is required for action \"remove\".");
+          const existed = store.remove(spaceId, params.id);
+          if (existed) {
+            store.save();
+            onWatchChange?.();
+            return textResult(`已取消订阅 ${params.id}。`);
+          }
+          return textResult(`没有找到该订阅（id ${params.id}）。`);
+        }
+        if (params.action === "list") {
+          const records = store.forSpace(spaceId);
+          if (records.length === 0) return textResult("当前没有任何订阅。");
+          const lines = records.map(
+            (r, i) => `${i + 1}. 『${r.label}』 — ${r.objectId}（通知到聊天 ${r.chatId}）`,
+          );
+          return textResult(`${records.length} 个订阅：\n${lines.join("\n")}`);
+        }
+        return textResult(`anytype_watch: unknown action "${params.action}" (use add, remove, or list).`);
+      } catch (err) {
+        return textResult(`anytype_watch failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   return [
     listObjects,
     search,
@@ -794,5 +867,6 @@ export function createAnytypeTools(deps: {
     createCollection,
     collectionItems,
     uploadFile,
+    watch,
   ] as ToolDefinition[];
 }

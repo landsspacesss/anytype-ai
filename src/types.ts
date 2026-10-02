@@ -44,4 +44,6 @@ export interface Config {
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;
+  /** How often to poll watched objects for changes (env WATCH_POLL_MS). */
+  watchPollMs: number;
 }
