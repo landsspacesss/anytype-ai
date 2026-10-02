@@ -41,6 +41,11 @@ services:
       # subprocess; state now lives under /root/.pi/agent).
       - bot_state:/root/.pi/agent
       - bot_workspace:/workspace
+      # anytype-cli's config dir (read-only): the gRPC bridge needs its
+      # `sessionToken` to authenticate to anytype-heart (console /join). The
+      # CLI rewrites this on restart, so mount the DIR (not the file) and read
+      # it fresh per call. `:ro` — the bot never writes it.
+      - ${ANYTYPE_CLI_CONFIG_DIR:-/home/landspace/anytype/storage/anytype-cli}:/root/.anytype:ro
     # Share anytype-cli's netns -> Host header 127.0.0.1:31012 (allowlisted) and
     # the loopback-only API bind is reachable.
     network_mode: "service:anytype-cli"
