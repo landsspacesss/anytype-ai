@@ -44,6 +44,22 @@ function textResult(text: string): { content: Array<{ type: "text"; text: string
   return { content: [{ type: "text", text }], details: {} };
 }
 
+/**
+ * Build an `insert_blocks` op. `before`/`after` name a precise slot and are
+ * mutually exclusive with `position` (the API rejects the combination), so
+ * `position` is only emitted when neither is given — defaulting to "last".
+ */
+function insertOp(
+  markdown: string,
+  pos: { before?: string; after?: string; position?: "first" | "last" } = {},
+): Record<string, unknown> {
+  const op: Record<string, unknown> = { op: "insert_blocks", markdown };
+  if (pos.before !== undefined) op.before = pos.before;
+  if (pos.after !== undefined) op.after = pos.after;
+  if (pos.before === undefined && pos.after === undefined) op.position = pos.position ?? "last";
+  return op;
+}
+
 /** Render a list of objects as a readable numbered list: `name (type) — id`. */
 function renderList(items: ObjectRef[]): string {
   if (items.length === 0) return "The Anytype space contains no matching objects.";
@@ -329,17 +345,25 @@ export function createAnytypeTools(deps: {
     name: "anytype_create_note",
     label: "Create Anytype note",
     description:
-      "Create a new page/note in the current Anytype space with a title and optional markdown body. Returns the new object id.",
-    promptSnippet: "anytype_create_note — create a new page/note in the Anytype space",
+      "Create a new page/note in the current Anytype space with a title and optional markdown body. Markdown supports tables (e.g. `| A | B |\\n| --- | --- |\\n| 1 | 2 |`). Optionally pass `template_id` (from anytype_templates) so the new object starts from that template's content. Returns the new object id.",
+    promptSnippet: "anytype_create_note — create a new page/note (optionally from a template) in the space",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       name: Type.String({ description: "The title of the new note." }),
-      markdown: Type.Optional(Type.String({ description: "Optional markdown body." })),
+      markdown: Type.Optional(Type.String({ description: "Optional markdown body (tables are supported)." })),
+      template_id: Type.Optional(
+        Type.String({ description: "Optional template id (from anytype_templates) to start the object from." }),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
-        const created = await api.createObject(spaceId, { name: params.name, markdown: params.markdown });
-        return textResult(`Created note "${params.name}" with id ${created.id}`);
+        const created = await api.createObject(spaceId, {
+          name: params.name,
+          markdown: params.markdown,
+          templateId: params.template_id,
+        });
+        const from = params.template_id ? ` from template ${params.template_id}` : "";
+        return textResult(`Created note "${params.name}"${from} with id ${created.id}`);
       } catch (err) {
         return textResult(`anytype_create_note failed: ${errMessage(err)}`);
       }
@@ -453,14 +477,20 @@ export function createAnytypeTools(deps: {
     name: "anytype_update_object",
     label: "Update Anytype object",
     description:
-      "Edit an existing Anytype object: rename it and/or append markdown to the end of its body. Provide at least one of `name` (new title) or `append_markdown` (markdown appended as new content).",
-    promptSnippet: "anytype_update_object — rename an object and/or append markdown to it",
+      "Edit an existing Anytype object: rename it and/or insert markdown into its body. Provide at least one of `name` (new title) or `append_markdown` (markdown inserted as new content). By default the markdown is appended at the end; pass `before` or `after` (a block id) to insert it at a precise position instead (the two are mutually exclusive). Markdown tables work (e.g. `| A | B |\\n| --- | --- |\\n| 1 | 2 |`).",
+    promptSnippet: "anytype_update_object — rename an object and/or insert markdown (optionally before/after a block)",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       id: Type.String({ description: "The object id to update." }),
       name: Type.Optional(Type.String({ description: "New title for the object." })),
       append_markdown: Type.Optional(
-        Type.String({ description: "Markdown to append to the end of the object's body." }),
+        Type.String({ description: "Markdown to insert into the object's body (tables supported)." }),
+      ),
+      before: Type.Optional(
+        Type.String({ description: "Insert the markdown immediately before this block id (instead of appending)." }),
+      ),
+      after: Type.Optional(
+        Type.String({ description: "Insert the markdown immediately after this block id (instead of appending)." }),
       ),
     }),
     async execute(_toolCallId, params) {
@@ -470,7 +500,7 @@ export function createAnytypeTools(deps: {
           ops.push({ op: "set_properties", set: { name: [params.name] } });
         }
         if (params.append_markdown !== undefined) {
-          ops.push({ op: "insert_blocks", markdown: params.append_markdown, position: "last" });
+          ops.push(insertOp(params.append_markdown, { before: params.before, after: params.after }));
         }
         if (ops.length === 0) {
           return textResult("anytype_update_object: provide `name` and/or `append_markdown`.");
@@ -478,7 +508,7 @@ export function createAnytypeTools(deps: {
         await api.patchObject(spaceId, params.id, ops);
         const parts: string[] = [];
         if (params.name !== undefined) parts.push(`renamed to "${params.name}"`);
-        if (params.append_markdown !== undefined) parts.push("appended markdown");
+        if (params.append_markdown !== undefined) parts.push("inserted markdown");
         return textResult(`Updated object ${params.id}: ${parts.join(", ")}.`);
       } catch (err) {
         return textResult(`anytype_update_object failed: ${errMessage(err)}`);
@@ -904,6 +934,173 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const sendMessage = defineTool({
+    name: "anytype_send_message",
+    label: "Send a chat message",
+    description:
+      "Send a text message into the CURRENT chat (the one this conversation is happening in). Use this to post something into the chat proactively — e.g. a summary or a follow-up — rather than as a reply.",
+    promptSnippet: "anytype_send_message — post a message into the current chat",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      text: Type.String({ description: "The message text to send." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const key = `chat-${chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await api.sendMessage(spaceId, chatId, params.text, key);
+        return textResult(`Sent message to the current chat (${chatId}).`);
+      } catch (err) {
+        return textResult(`anytype_send_message failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const react = defineTool({
+    name: "anytype_react",
+    label: "React to a chat message",
+    description:
+      "Add an emoji reaction to a message in the CURRENT chat. Pass the message id (from a chat read) and the emoji, e.g. \"👍\".",
+    promptSnippet: "anytype_react — add an emoji reaction to a message in the current chat",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      message_id: Type.String({ description: "The id of the message to react to." }),
+      emoji: Type.String({ description: "The emoji to react with, e.g. \"👍\"." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        await api.reactToMessage(spaceId, chatId, params.message_id, params.emoji);
+        return textResult(`Reacted ${params.emoji} to message ${params.message_id}.`);
+      } catch (err) {
+        return textResult(`anytype_react failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const editMessage = defineTool({
+    name: "anytype_edit_message",
+    label: "Edit a chat message",
+    description:
+      "Edit the text of an existing message in the CURRENT chat, in place. Pass the message id and the new `text`.",
+    promptSnippet: "anytype_edit_message — edit the text of a message in the current chat",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      message_id: Type.String({ description: "The id of the message to edit." }),
+      text: Type.String({ description: "The new message text." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        await api.editMessage(spaceId, chatId, params.message_id, params.text);
+        return textResult(`Edited message ${params.message_id}.`);
+      } catch (err) {
+        return textResult(`anytype_edit_message failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const deleteMessage = defineTool({
+    name: "anytype_delete_message",
+    label: "Delete a chat message",
+    description:
+      "Delete a message from the CURRENT chat by id. This is permanent — confirm the message id first.",
+    promptSnippet: "anytype_delete_message — delete a message from the current chat by id",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      message_id: Type.String({ description: "The id of the message to delete." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        await api.deleteMessage(spaceId, chatId, params.message_id);
+        return textResult(`Deleted message ${params.message_id}.`);
+      } catch (err) {
+        return textResult(`anytype_delete_message failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const templates = defineTool({
+    name: "anytype_templates",
+    label: "Manage Anytype templates",
+    description:
+      "Manage templates in the current space. Actions: \"list\" (optional `type` to filter by a type key), \"create\" (needs `name` + `type`, and a `markdown` body), \"delete\" (needs `template_id`). Use a template's id with anytype_create_note's `template_id` to start a new object from it.",
+    promptSnippet: "anytype_templates — list/create/delete templates; apply one via anytype_create_note",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      action: Type.String({ description: "One of: list, create, delete." }),
+      type: Type.Optional(Type.String({ description: "Object type key (e.g. \"page\") — for list filtering and create." })),
+      name: Type.Optional(Type.String({ description: "Template name (required for create)." })),
+      markdown: Type.Optional(Type.String({ description: "Template body as markdown (for create; tables supported)." })),
+      template_id: Type.Optional(Type.String({ description: "The template id to delete (required for delete)." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        if (params.action === "list") {
+          const list = await api.listTemplates(spaceId, params.type);
+          if (list.length === 0) return textResult("The space has no templates.");
+          const lines = list.map(
+            (t) => `${t.name || "(untitled)"} (${t.templateFor || "?"})${t.isDefault ? " [default]" : ""} — ${t.id}`,
+          );
+          return textResult(`${list.length} template(s):\n${lines.join("\n")}`);
+        }
+        if (params.action === "create") {
+          if (!params.name) return textResult("anytype_templates: `name` is required for action \"create\".");
+          if (!params.type) return textResult("anytype_templates: `type` is required for action \"create\".");
+          const { id } = await api.createTemplate(spaceId, {
+            name: params.name,
+            typeKey: params.type,
+            markdown: params.markdown,
+          });
+          return textResult(`Created template "${params.name}" for type ${params.type} with id ${id}.`);
+        }
+        if (params.action === "delete") {
+          if (!params.template_id) {
+            return textResult("anytype_templates: `template_id` is required for action \"delete\".");
+          }
+          await api.deleteTemplate(spaceId, params.template_id);
+          return textResult(`Deleted template ${params.template_id}.`);
+        }
+        return textResult(`anytype_templates: unknown action "${params.action}" (use list, create, or delete).`);
+      } catch (err) {
+        return textResult(`anytype_templates failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const insertMarkdown = defineTool({
+    name: "anytype_insert_markdown",
+    label: "Insert markdown at a position",
+    description:
+      "Insert markdown into an object at a precise position. `id` is the object id. By default the markdown is appended at the end (`position` \"last\"); pass `position` \"first\" to prepend, or `before`/`after` (a block id) to insert relative to an existing block (`before`/`after` are mutually exclusive with `position`). Markdown tables work, e.g. `| A | B |\\n| --- | --- |\\n| 1 | 2 |`.",
+    promptSnippet: "anytype_insert_markdown — insert markdown into an object at first/last or before/after a block",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id to insert into." }),
+      markdown: Type.String({ description: "The markdown to insert (tables supported)." }),
+      before: Type.Optional(Type.String({ description: "Insert immediately before this block id." })),
+      after: Type.Optional(Type.String({ description: "Insert immediately after this block id." })),
+      position: Type.Optional(
+        Type.String({ description: "Where to insert when no before/after is given: \"first\" or \"last\" (default last)." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const position = params.position === "first" ? "first" : params.position === "last" ? "last" : undefined;
+        const op = insertOp(params.markdown, { before: params.before, after: params.after, position });
+        await api.patchObject(spaceId, params.id, [op]);
+        const where =
+          params.before !== undefined
+            ? `before ${params.before}`
+            : params.after !== undefined
+              ? `after ${params.after}`
+              : position === "first"
+                ? "at the start"
+                : "at the end";
+        return textResult(`Inserted markdown ${where} of object ${params.id}.`);
+      } catch (err) {
+        return textResult(`anytype_insert_markdown failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   return [
     listObjects,
     search,
@@ -924,5 +1121,11 @@ export function createAnytypeTools(deps: {
     collectionItems,
     uploadFile,
     watch,
+    sendMessage,
+    react,
+    editMessage,
+    deleteMessage,
+    templates,
+    insertMarkdown,
   ] as ToolDefinition[];
 }

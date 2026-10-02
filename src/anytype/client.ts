@@ -43,6 +43,51 @@ export class AnytypeClient {
     if (!res.ok) throw new AnytypeApiError(res.status, "sendMessage");
   }
 
+  /**
+   * Create a chat in the space. Returns its id. (Anytype exposes no chat delete
+   * endpoint: a chat created here can only be archived in the app.)
+   */
+  async createChat(spaceId: string, name: string): Promise<{ id: string }> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats`;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "createChat");
+    const body = (await res.json()) as { id?: string };
+    return { id: body.id ?? "" };
+  }
+
+  /** Add an emoji reaction to a chat message. */
+  async reactToMessage(spaceId: string, chatId: string, messageId: string, emoji: string): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats/${chatId}/messages/${messageId}/reactions`;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ emoji }),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "reactToMessage");
+  }
+
+  /** Edit a chat message's text in place. */
+  async editMessage(spaceId: string, chatId: string, messageId: string, text: string): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats/${chatId}/messages/${messageId}`;
+    const res = await this.fetchFn(url, {
+      method: "PATCH",
+      headers: this.headers(),
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "editMessage");
+  }
+
+  /** Delete a chat message. */
+  async deleteMessage(spaceId: string, chatId: string, messageId: string): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats/${chatId}/messages/${messageId}`;
+    const res = await this.fetchFn(url, { method: "DELETE", headers: this.headers() });
+    if (!res.ok) throw new AnytypeApiError(res.status, "deleteMessage");
+  }
+
   async listSpaces(): Promise<Array<{ id: string; name: string }>> {
     const url = `${this.baseUrl}/v2/spaces`;
     const res = await this.fetchFn(url, { headers: this.headers() });
@@ -137,21 +182,25 @@ export class AnytypeClient {
 
   async createObject(
     spaceId: string,
-    opts: { name: string; markdown?: string; type?: string },
+    opts: { name: string; markdown?: string; type?: string; templateId?: string },
   ): Promise<{ id: string }> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects`;
+    const body: Record<string, unknown> = {
+      type: opts.type ?? "page",
+      name: opts.name,
+      markdown: opts.markdown ?? "",
+    };
+    // When a template id is given, the new object starts from that template's
+    // content (the server applies it before/alongside any markdown).
+    if (opts.templateId) body.template = opts.templateId;
     const res = await this.fetchFn(url, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({
-        type: opts.type ?? "page",
-        name: opts.name,
-        markdown: opts.markdown ?? "",
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new AnytypeApiError(res.status, "createObject");
-    const body = (await res.json()) as { id?: string };
-    return { id: body.id ?? "" };
+    const parsed = (await res.json()) as { id?: string };
+    return { id: parsed.id ?? "" };
   }
 
   /** Apply an atomic batch of ops (1..512) to an object: PATCH objects/{id}. */
@@ -215,6 +264,72 @@ export class AnytypeClient {
     return (body.data ?? []).map((t) => ({ key: t.key ?? "", name: t.name ?? "" }));
   }
 
+  /**
+   * List the space's templates (optionally for one type key). Reads `body.data`
+   * and maps the wire fields (`template_for`/`default`) to camelCase.
+   */
+  async listTemplates(
+    spaceId: string,
+    typeKey?: string,
+  ): Promise<Array<{ id: string; name: string; templateFor: string; isDefault?: boolean }>> {
+    const q = typeKey ? `?type=${encodeURIComponent(typeKey)}` : "";
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/templates${q}`;
+    const res = await this.fetchFn(url, { headers: this.headers() });
+    if (!res.ok) throw new AnytypeApiError(res.status, "listTemplates");
+    const body = (await res.json()) as {
+      data?: Array<{ id?: string; name?: string; template_for?: string; default?: boolean }>;
+    };
+    return (body.data ?? []).map((t) => ({
+      id: t.id ?? "",
+      name: t.name ?? "",
+      templateFor: t.template_for ?? "",
+      isDefault: t.default,
+    }));
+  }
+
+  /**
+   * Create a template for a type from an AnyBlock document. The templates
+   * endpoint takes an AnyBlock doc (NOT the object endpoint's `markdown`
+   * convenience field): `{formatVersion:"2.0", kind:"template",
+   * template_for, properties:{name}, blocks}`. When only `markdown` is given we
+   * convert it to blocks locally (see markdownToBlocks).
+   */
+  async createTemplate(
+    spaceId: string,
+    opts: { name: string; typeKey: string; markdown?: string; blocks?: unknown[]; icon?: string },
+  ): Promise<{ id: string }> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/templates`;
+    const blocks = opts.blocks ?? markdownToBlocks(opts.markdown ?? "");
+    const body: Record<string, unknown> = {
+      formatVersion: "2.0",
+      kind: "template",
+      type: "template",
+      template_for: opts.typeKey,
+      properties: { name: opts.name },
+      blocks,
+    };
+    if (opts.icon !== undefined) body.icon = opts.icon;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "createTemplate");
+    const parsed = (await res.json()) as { id?: string };
+    return { id: parsed.id ?? "" };
+  }
+
+  /**
+   * Delete a template. Note: the documented `DELETE /templates/{id}` route does
+   * not exist (404); a template is an object, so it is deleted via the objects
+   * route (verified live).
+   */
+  async deleteTemplate(spaceId: string, templateId: string): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects/${templateId}`;
+    const res = await this.fetchFn(url, { method: "DELETE", headers: this.headers() });
+    if (!res.ok) throw new AnytypeApiError(res.status, "deleteTemplate");
+  }
+
   /** Create a collection, optionally seeded with object ids. */
   async createCollection(
     spaceId: string,
@@ -272,4 +387,149 @@ export class AnytypeClient {
 
     throw new Error("uploadFile failed: provide either url or path");
   }
+}
+
+/** A random lowercase-hex id (used for generated table column/row ids). */
+function hexId(len: number): string {
+  const chars = "0123456789abcdef";
+  let s = "";
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
+  return s;
+}
+
+/** Parse one markdown table row (`| a | b |`) into trimmed cells. */
+function splitTableRow(line: string): string[] {
+  let t = line.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|")) t = t.slice(0, -1);
+  return t.split("|").map((c) => c.trim());
+}
+
+/** True for a markdown table's `| --- | --- |` separator row. */
+function isTableSeparator(line: string): boolean {
+  const t = line.trim();
+  if (!t.includes("-") || !t.includes("|")) return false;
+  return /^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$/.test(t);
+}
+
+/**
+ * Convert a markdown body into AnyBlock blocks for the templates endpoint
+ * (which — unlike the objects endpoint — rejects a `markdown` field and needs
+ * real blocks). Supports the common constructs: ATX headings, bulleted /
+ * numbered / checkbox lists (with nesting via `indent`), blockquotes, fenced
+ * code, dividers, GFM tables, and paragraphs. Inline formatting is left as-is
+ * (AnyBlock accepts `**bold**`, `*italic*`, links, … inline).
+ */
+export function markdownToBlocks(markdown: string): unknown[] {
+  const blocks: unknown[] = [];
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block.
+    const fence = line.match(/^```(.*)$/);
+    if (fence) {
+      const language = fence[1].trim();
+      i++;
+      const code: string[] = [];
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // consume the closing fence
+      const b: Record<string, unknown> = { type: "code", text: code.join("\n") };
+      if (language) b.language = language;
+      blocks.push(b);
+      continue;
+    }
+
+    // GFM table: a header row followed by a `| --- |` separator.
+    if (line.includes("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const header = splitTableRow(line);
+      i += 2;
+      const dataRows: string[][] = [];
+      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
+        dataRows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      const columns = header.map((h) => ({ id: hexId(24), header: h }));
+      const rows = [
+        { id: hexId(5), is_header: true, cells: header },
+        ...dataRows.map((r) => ({ id: hexId(5), cells: r })),
+      ];
+      blocks.push({ type: "table", columns, rows });
+      continue;
+    }
+
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // ATX heading (# .. ######); AnyBlock has heading_1..4.
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4);
+      blocks.push({ type: `heading_${level}`, text: heading[2].trim() });
+      i++;
+      continue;
+    }
+
+    // Divider (checked before lists so `***`/`---` aren't list items).
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      blocks.push({ type: "divider" });
+      i++;
+      continue;
+    }
+
+    // Blockquote.
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      blocks.push({ type: "quote", text: quote[1] });
+      i++;
+      continue;
+    }
+
+    // Checkbox list item.
+    const checkbox = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/);
+    if (checkbox) {
+      const indent = Math.min(Math.floor(checkbox[1].length / 2), 32);
+      const b: Record<string, unknown> = {
+        type: "checkbox",
+        checked: checkbox[2].toLowerCase() === "x",
+        text: checkbox[3],
+      };
+      if (indent > 0) b.indent = indent;
+      blocks.push(b);
+      i++;
+      continue;
+    }
+
+    // Bulleted list item.
+    const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
+    if (bullet) {
+      const indent = Math.min(Math.floor(bullet[1].length / 2), 32);
+      const b: Record<string, unknown> = { type: "bulleted_list_item", text: bullet[2] };
+      if (indent > 0) b.indent = indent;
+      blocks.push(b);
+      i++;
+      continue;
+    }
+
+    // Numbered list item.
+    const numbered = line.match(/^(\s*)\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      const indent = Math.min(Math.floor(numbered[1].length / 2), 32);
+      const b: Record<string, unknown> = { type: "numbered_list_item", text: numbered[2] };
+      if (indent > 0) b.indent = indent;
+      blocks.push(b);
+      i++;
+      continue;
+    }
+
+    blocks.push({ type: "paragraph", text: line });
+    i++;
+  }
+  return blocks;
 }

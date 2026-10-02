@@ -174,3 +174,167 @@ describe("AnytypeClient object edits", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("AnytypeClient chat operations", () => {
+  it("createChat POSTs {name} and returns the id", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "chat-1" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const res = await c.createChat("s1", "Project chat");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/chats");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Project chat" });
+    expect(res).toEqual({ id: "chat-1" });
+  });
+
+  it("createChat throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 400 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.createChat("s1", "x")).rejects.toThrow(/400/);
+  });
+
+  it("reactToMessage POSTs the emoji to the reactions endpoint", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ added: true }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.reactToMessage("s1", "c1", "m1", "👍");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/chats/c1/messages/m1/reactions");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ emoji: "👍" });
+  });
+
+  it("editMessage PATCHes the message with {text}", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "m1" }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.editMessage("s1", "c1", "m1", "v2");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/chats/c1/messages/m1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ text: "v2" });
+  });
+
+  it("deleteMessage DELETEs the message", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "m1" }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.deleteMessage("s1", "c1", "m1");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/chats/c1/messages/m1");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteMessage throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 404 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.deleteMessage("s1", "c1", "m1")).rejects.toThrow(/404/);
+  });
+});
+
+describe("AnytypeClient templates", () => {
+  it("listTemplates maps template_for/default and passes the type filter", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: [{ id: "t1", name: "Weekly", template_for: "page", default: true }] }),
+          { status: 200 },
+        ),
+    );
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const list = await c.listTemplates("s1", "page");
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/templates?type=page");
+    expect(list).toEqual([{ id: "t1", name: "Weekly", templateFor: "page", isDefault: true }]);
+  });
+
+  it("listTemplates without a type omits the query string", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.listTemplates("s1");
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/templates");
+  });
+
+  it("createTemplate POSTs an AnyBlock doc and converts markdown to blocks", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "tpl-1" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const res = await c.createTemplate("s1", { name: "日记", typeKey: "page", markdown: "# 标题\nbody" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/templates");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      formatVersion: "2.0",
+      kind: "template",
+      type: "template",
+      template_for: "page",
+      properties: { name: "日记" },
+      blocks: [
+        { type: "heading_1", text: "标题" },
+        { type: "paragraph", text: "body" },
+      ],
+    });
+    expect(res).toEqual({ id: "tpl-1" });
+  });
+
+  it("createTemplate converts a markdown table into a table block", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "tpl-t" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.createTemplate("s1", {
+      name: "T",
+      typeKey: "page",
+      markdown: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+    });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const blocks = JSON.parse(init.body as string).blocks as Array<Record<string, unknown>>;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe("table");
+    expect((blocks[0].columns as Array<{ header: string }>).map((col) => col.header)).toEqual(["A", "B"]);
+    const rows = blocks[0].rows as Array<{ is_header?: boolean; cells: string[] }>;
+    expect(rows[0].is_header).toBe(true);
+    expect(rows[0].cells).toEqual(["A", "B"]);
+    expect(rows[1].cells).toEqual(["1", "2"]);
+  });
+
+  it("createTemplate passes explicit blocks through and includes an icon", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "tpl-2" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const blocks = [{ type: "paragraph", text: "hi" }];
+    await c.createTemplate("s1", { name: "T", typeKey: "note", blocks, icon: "📝" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.blocks).toEqual(blocks);
+    expect(body.template_for).toBe("note");
+    expect(body.icon).toBe("📝");
+  });
+
+  it("deleteTemplate DELETEs via the objects route", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "tpl-1" }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.deleteTemplate("s1", "tpl-1");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/objects/tpl-1");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteTemplate throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 403 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.deleteTemplate("s1", "tpl-1")).rejects.toThrow(/403/);
+  });
+
+  it("createObject includes template when templateId is given", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "obj-1" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.createObject("s1", { name: "From tpl", markdown: "x", templateId: "tpl-9" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.template).toBe("tpl-9");
+    expect(body.name).toBe("From tpl");
+  });
+
+  it("createObject omits template when no templateId is given", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "obj-1" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.createObject("s1", { name: "Plain" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ type: "page", name: "Plain", markdown: "" });
+  });
+});

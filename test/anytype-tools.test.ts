@@ -48,6 +48,15 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
     createCollection: vi.fn(async () => ({ id: "coll-1" })),
     uploadFile: vi.fn(async () => ({ id: "file-1" })),
     sendMessage: vi.fn(async () => {}),
+    createChat: vi.fn(async () => ({ id: "chat-new" })),
+    reactToMessage: vi.fn(async () => {}),
+    editMessage: vi.fn(async () => {}),
+    deleteMessage: vi.fn(async () => {}),
+    listTemplates: vi.fn(async () => [
+      { id: "tpl-1", name: "Weekly Plan", templateFor: "page", isDefault: true },
+    ]),
+    createTemplate: vi.fn(async () => ({ id: "tpl-new" })),
+    deleteTemplate: vi.fn(async () => {}),
   };
   return { ...base, ...overrides } as unknown as AnytypeClient;
 }
@@ -101,9 +110,9 @@ function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: st
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the nineteen Anytype tools with expected names", () => {
+  it("returns the twenty-five Anytype tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(19);
+    expect(tools).toHaveLength(25);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -124,6 +133,12 @@ describe("createAnytypeTools", () => {
       "anytype_collection_items",
       "anytype_upload_file",
       "anytype_watch",
+      "anytype_send_message",
+      "anytype_react",
+      "anytype_edit_message",
+      "anytype_delete_message",
+      "anytype_templates",
+      "anytype_insert_markdown",
     ]);
   });
 
@@ -410,7 +425,7 @@ describe("createAnytypeTools", () => {
     ]);
     const text = res.content[0].text;
     expect(text).toContain("renamed");
-    expect(text).toContain("appended");
+    expect(text).toContain("inserted");
   });
 
   it("anytype_update_object asks for an argument when neither is given", async () => {
@@ -889,5 +904,185 @@ describe("createAnytypeTools", () => {
     const res = await run(toolByName(mkTools(api), "anytype_watch"), { action: "add", id: "gone" });
     expect(res.content[0].text).toContain("anytype_watch failed");
     expect(res.content[0].text).toContain("404");
+  });
+
+  // --- chat operations -----------------------------------------------------
+
+  it("anytype_send_message sends to the CURRENT chat with an idempotency key", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_send_message"), { text: "hello chat" });
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    const call = (api.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe(SPACE);
+    expect(call[1]).toBe(CHAT);
+    expect(call[2]).toBe("hello chat");
+    expect(typeof call[3]).toBe("string");
+    expect(res.content[0].text).toContain("Sent");
+  });
+
+  it("anytype_react calls reactToMessage on the current chat", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_react"), { message_id: "m1", emoji: "👍" });
+    expect(api.reactToMessage).toHaveBeenCalledWith(SPACE, CHAT, "m1", "👍");
+    expect(res.content[0].text).toContain("m1");
+  });
+
+  it("anytype_edit_message calls editMessage on the current chat", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_edit_message"), { message_id: "m2", text: "v2" });
+    expect(api.editMessage).toHaveBeenCalledWith(SPACE, CHAT, "m2", "v2");
+    expect(res.content[0].text).toContain("m2");
+  });
+
+  it("anytype_delete_message calls deleteMessage on the current chat", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_delete_message"), { message_id: "m3" });
+    expect(api.deleteMessage).toHaveBeenCalledWith(SPACE, CHAT, "m3");
+    expect(res.content[0].text).toContain("m3");
+  });
+
+  it("chat-op tools surface failures as text instead of throwing", async () => {
+    const api = fakeApi({
+      reactToMessage: vi.fn(async () => {
+        throw new Error("reactToMessage failed: 404");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_react"), { message_id: "x", emoji: "👍" });
+    expect(res.content[0].text).toContain("anytype_react failed");
+    expect(res.content[0].text).toContain("404");
+  });
+
+  // --- templates -----------------------------------------------------------
+
+  it("anytype_templates list renders name/type/id and passes the optional type filter", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_templates"), { action: "list", type: "page" });
+    expect(api.listTemplates).toHaveBeenCalledWith(SPACE, "page");
+    const text = res.content[0].text;
+    expect(text).toContain("Weekly Plan");
+    expect(text).toContain("(page)");
+    expect(text).toContain("[default]");
+    expect(text).toContain("tpl-1");
+  });
+
+  it("anytype_templates list without a type filter passes undefined", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_templates"), { action: "list" });
+    expect(api.listTemplates).toHaveBeenCalledWith(SPACE, undefined);
+  });
+
+  it("anytype_templates create passes name/typeKey/markdown and returns the id", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_templates"), {
+      action: "create",
+      name: "日记模板",
+      type: "page",
+      markdown: "# 标题\n- a",
+    });
+    expect(api.createTemplate).toHaveBeenCalledWith(SPACE, {
+      name: "日记模板",
+      typeKey: "page",
+      markdown: "# 标题\n- a",
+    });
+    expect(res.content[0].text).toContain("tpl-new");
+  });
+
+  it("anytype_templates create requires name and type", async () => {
+    const api = fakeApi();
+    const noName = await run(toolByName(mkTools(api), "anytype_templates"), { action: "create", type: "page" });
+    expect(api.createTemplate).not.toHaveBeenCalled();
+    expect(noName.content[0].text).toMatch(/name/);
+    const noType = await run(toolByName(mkTools(api), "anytype_templates"), { action: "create", name: "X" });
+    expect(api.createTemplate).not.toHaveBeenCalled();
+    expect(noType.content[0].text).toMatch(/type/);
+  });
+
+  it("anytype_templates delete requires template_id and calls deleteTemplate", async () => {
+    const api = fakeApi();
+    const missing = await run(toolByName(mkTools(api), "anytype_templates"), { action: "delete" });
+    expect(api.deleteTemplate).not.toHaveBeenCalled();
+    expect(missing.content[0].text).toMatch(/template_id/);
+
+    const res = await run(toolByName(mkTools(api), "anytype_templates"), { action: "delete", template_id: "tpl-9" });
+    expect(api.deleteTemplate).toHaveBeenCalledWith(SPACE, "tpl-9");
+    expect(res.content[0].text).toContain("tpl-9");
+  });
+
+  it("anytype_create_note passes template_id through as templateId", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_create_note"), {
+      name: "From tpl",
+      template_id: "tpl-1",
+    });
+    expect(api.createObject).toHaveBeenCalledWith(SPACE, {
+      name: "From tpl",
+      markdown: undefined,
+      templateId: "tpl-1",
+    });
+    expect(res.content[0].text).toContain("new-123");
+    expect(res.content[0].text).toContain("tpl-1");
+  });
+
+  // --- precise insertion ---------------------------------------------------
+
+  it("anytype_insert_markdown defaults to position last", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_insert_markdown"), {
+      id: "obj1",
+      markdown: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "| A | B |\n| --- | --- |\n| 1 | 2 |", position: "last" },
+    ]);
+    expect(res.content[0].text).toContain("at the end");
+  });
+
+  it("anytype_insert_markdown honors position first", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_insert_markdown"), {
+      id: "obj1",
+      markdown: "X",
+      position: "first",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "X", position: "first" },
+    ]);
+  });
+
+  it("anytype_insert_markdown with before/after omits position", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_insert_markdown"), {
+      id: "obj1",
+      markdown: "X",
+      after: "b9",
+      position: "last",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "X", after: "b9" },
+    ]);
+
+    const api2 = fakeApi();
+    const res = await run(toolByName(mkTools(api2), "anytype_insert_markdown"), {
+      id: "obj1",
+      markdown: "Y",
+      before: "b1",
+    });
+    expect(api2.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "Y", before: "b1" },
+    ]);
+    expect(res.content[0].text).toContain("before b1");
+  });
+
+  it("anytype_update_object append_markdown honors before/after", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_update_object"), {
+      id: "obj1",
+      append_markdown: "body",
+      after: "b2",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "body", after: "b2" },
+    ]);
   });
 });
