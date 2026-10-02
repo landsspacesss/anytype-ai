@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleCommand, HELP_TEXT, type CommandContext } from "../src/commands/handler.js";
 import type { InterruptPolicy, ManagedClient } from "../src/session/manager.js";
+import type { ApprovalMode } from "../src/agent/approval.js";
 
 /** A fake ManagedClient whose control ops are spies; prompt/close/abort are no-ops. */
 function fakeClient(overrides: Partial<ManagedClient> = {}) {
@@ -33,6 +34,10 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     return p;
   });
   const joinSpace = vi.fn(async () => ({ ok: true, message: "ok" }));
+  let mode: ApprovalMode = "auto";
+  const setApprovalMode = vi.fn((m: ApprovalMode) => { mode = m; return m; });
+  const approvePending = vi.fn(() => true);
+  const getApprovalMode = () => mode;
   const context: CommandContext = {
     chatId: "c1",
     getClient: () => client,
@@ -42,8 +47,21 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     getInterruptPolicy: () => current,
     setInterruptPolicy,
     joinSpace,
+    getApprovalMode,
+    setApprovalMode,
+    approvePending,
   };
-  return { context, ensure, reset, setInterruptPolicy, joinSpace, getPolicy: () => current };
+  return {
+    context,
+    ensure,
+    reset,
+    setInterruptPolicy,
+    joinSpace,
+    setApprovalMode,
+    approvePending,
+    getPolicy: () => current,
+    getApprovalMode,
+  };
 }
 
 describe("handleCommand", () => {
@@ -137,27 +155,58 @@ describe("handleCommand", () => {
     expect(reply).toMatch(/不支持/);
   });
 
-  it("/yolo with no arg reports the current state (default on)", async () => {
-    const c = fakeClient();
-    const { context } = ctx(c);
+  it("/yolo with no arg reports the approval mode", async () => {
+    const { context } = ctx(fakeClient());
     const reply = await handleCommand("yolo", "", context);
-    expect(reply).toMatch(/开/);
+    expect(reply).toContain("auto");
   });
 
-  it("/yolo off toggles auto tools off", async () => {
-    const c = fakeClient();
-    const { context } = ctx(c);
-    const reply = await handleCommand("yolo", "off", context);
-    expect(c.setAutoTools).toHaveBeenCalledWith(false);
-    expect(reply).toContain("关");
+  it("/yolo ask sets ask mode", async () => {
+    const { context, setApprovalMode } = ctx(fakeClient()); // 让 ctx() 也返回 setApprovalMode
+    const reply = await handleCommand("yolo", "ask", context);
+    expect(setApprovalMode).toHaveBeenCalledWith("ask");
+    expect(reply).toMatch(/ask|批准/);
   });
 
-  it("/yolo on toggles auto tools on", async () => {
-    const c = fakeClient();
-    const { context } = ctx(c);
-    const reply = await handleCommand("yolo", "on", context);
-    expect(c.setAutoTools).toHaveBeenCalledWith(true);
-    expect(reply).toContain("开");
+  it("/yolo on → auto, /yolo off → ask (aliases)", async () => {
+    const { context, setApprovalMode } = ctx(fakeClient());
+    await handleCommand("yolo", "on", context);
+    expect(setApprovalMode).toHaveBeenLastCalledWith("auto");
+    await handleCommand("yolo", "off", context);
+    expect(setApprovalMode).toHaveBeenLastCalledWith("ask");
+  });
+
+  it("/yolo readonly sets readonly", async () => {
+    const { context, setApprovalMode } = ctx(fakeClient());
+    await handleCommand("yolo", "readonly", context);
+    expect(setApprovalMode).toHaveBeenLastCalledWith("readonly");
+  });
+
+  it("/approve delegates to approvePending('approve')", async () => {
+    const { context, approvePending } = ctx(fakeClient());
+    const reply = await handleCommand("approve", "", context);
+    expect(approvePending).toHaveBeenCalledWith("approve");
+    expect(reply.length).toBeGreaterThan(0);
+  });
+
+  it("/approve all delegates with 'all'", async () => {
+    const { context, approvePending } = ctx(fakeClient());
+    await handleCommand("approve", "all", context);
+    expect(approvePending).toHaveBeenCalledWith("all");
+  });
+
+  it("/deny delegates with 'deny'", async () => {
+    const { context, approvePending } = ctx(fakeClient());
+    await handleCommand("deny", "", context);
+    expect(approvePending).toHaveBeenCalledWith("deny");
+  });
+
+  it("/approve with nothing pending says so", async () => {
+    const { context } = ctx(fakeClient());
+    // override approvePending to return false
+    const c2 = { ...context, approvePending: vi.fn(() => false) };
+    const reply = await handleCommand("approve", "", c2);
+    expect(reply).toMatch(/没有|无/);
   });
 
   it("/interrupt with no arg reports the current policy (default step)", async () => {
@@ -208,7 +257,7 @@ describe("handleCommand", () => {
   it("works when no client exists for read-only commands", async () => {
     const { context } = ctx(undefined);
     await expect(handleCommand("model", "", context)).resolves.toContain("deepseek-flash");
-    await expect(handleCommand("yolo", "", context)).resolves.toMatch(/开/);
+    await expect(handleCommand("yolo", "", context)).resolves.toMatch(/auto/);
   });
 
   it("/interrupt works with no live client (read + write)", async () => {

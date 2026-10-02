@@ -1,4 +1,5 @@
 import type { InterruptPolicy, ManagedClient } from "../session/manager.js";
+import type { ApprovalMode } from "../agent/approval.js";
 
 /** Everything a command needs: the chat's client + a way to reset its session. */
 export interface CommandContext {
@@ -25,6 +26,12 @@ export interface CommandContext {
    * human-readable result message.
    */
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
+  /** Current approval mode for this chat. */
+  getApprovalMode(): ApprovalMode;
+  /** Set the approval mode; returns the applied mode. */
+  setApprovalMode(mode: ApprovalMode): ApprovalMode;
+  /** Resolve a pending approval. Returns true if one was pending. */
+  approvePending(kind: "approve" | "all" | "deny"): boolean;
 }
 
 /** Thinking levels `/effort` accepts (pi clamps to what the model supports). */
@@ -35,6 +42,11 @@ export function interruptLabel(p: InterruptPolicy): string {
   return p === "immediate" ? "立刻打断" : "等这一步结束";
 }
 
+/** Human-readable label for an approval mode. */
+export function approvalLabel(m: ApprovalMode): string {
+  return m === "auto" ? "auto（不问，直接执行）" : m === "ask" ? "ask（每次写操作需批准）" : "readonly（不能写）";
+}
+
 export const HELP_TEXT = [
   "可用指令：",
   "/new — 开始新对话（清空当前会话历史）",
@@ -42,7 +54,9 @@ export const HELP_TEXT = [
   "/compact — 压缩/精简当前对话",
   "/model [名称] — 查看或切换本对话的模型",
   "/effort [档位] — 查看或设置思考级别（档位取决于模型，通常 off|high|max）",
-  "/yolo [on|off] — 开关 YOLO 自动模式（默认开）",
+  "/yolo [auto|ask|readonly] — 审批模式：auto=不问，ask=写操作需批准（/yolo off），readonly=不能写（/yolo readonly）",
+  "/approve [all] — 批准待批准的操作（all=本回合剩余全放行）",
+  "/deny — 拒绝待批准的操作",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
   "/join <链接> — 加入一个空间（邀请链接）或接入 1:1 控制台（1:1 链接）",
   "/help — 显示本帮助",
@@ -113,20 +127,30 @@ export async function handleCommand(
     }
 
     case "yolo": {
-      const client = ctx.getClient();
       if (!args) {
-        const on = client?.isAutoTools?.() ?? true;
-        return `YOLO 自动模式：${on ? "开" : "关"}`;
+        return `审批模式：${approvalLabel(ctx.getApprovalMode())}`;
       }
       const arg = args.toLowerCase();
-      if (arg !== "on" && arg !== "off") {
-        return `用法：/yolo [on|off]（当前：${(client?.isAutoTools?.() ?? true) ? "开" : "关"}）`;
-      }
-      const target = arg === "on";
-      const live = await ctx.ensureClient();
-      if (!live.setAutoTools) return "当前会话不支持自动模式切换。";
-      const status = live.setAutoTools(target);
-      return status;
+      let mode: ApprovalMode;
+      if (arg === "auto" || arg === "on") mode = "auto";
+      else if (arg === "ask" || arg === "off") mode = "ask";
+      else if (arg === "readonly" || arg === "ro") mode = "readonly";
+      else return `用法：/yolo [auto|ask|readonly]（当前：${approvalLabel(ctx.getApprovalMode())}）`;
+      const applied = ctx.setApprovalMode(mode);
+      return `审批模式已设为：${approvalLabel(applied)}`;
+    }
+
+    case "approve": {
+      const kind = args.trim().toLowerCase() === "all" ? "all" : "approve";
+      const had = ctx.approvePending(kind);
+      return had
+        ? kind === "all" ? "已批准本次及本回合后续操作。" : "已批准本次操作。"
+        : "当前没有待批准的操作。";
+    }
+
+    case "deny": {
+      const had = ctx.approvePending("deny");
+      return had ? "已拒绝该操作。" : "当前没有待批准的操作。";
     }
 
     case "interrupt": {

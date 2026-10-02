@@ -218,6 +218,9 @@ async function main(): Promise<void> {
             joinSpace: e.isDirect
               ? joinSpace
               : async () => ({ ok: false, message: "／join 只能在私聊或控制台（两人空间）里使用。" }),
+            getApprovalMode: () => sessions.getApprovalMode(e.chatId),
+            setApprovalMode: (mode) => sessions.setApprovalMode(e.chatId, mode),
+            approvePending: (kind) => sessions.approvePending(e.chatId, kind),
           };
           const reply = await handleCommand(parsed.command, parsed.args, ctx);
           if (reply && reply.trim().length > 0) {
