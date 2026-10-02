@@ -104,7 +104,7 @@ DEEPSEEK_API_KEY=sk-...      # 当前用的
 
 然后 `docker compose ... up -d --force-recreate ai-bot`。
 
-> 当前用的是 **deepseek**（`deepseek-v4-pro`，pi 依 provider 自动选）。换 provider 只需改 `.env` 里对应的 key 变量，无需改代码。
+> 当前用的是 **DeepSeek V4.1**（模型 id `deepseek-flash`，**原生多模态、能看图**）。pi 的内置模型表还没有 V4.1，所以用 `docker/models.json` 手动注册（含 `input:["text","image"]`）；该文件在启动时被复制进 pi 的 agent 目录（见 `src/agent/pi-session.ts` 的 `ensureModelsConfig`）。用 `PI_MODEL` 环境变量切换模型。
 
 ---
 
@@ -145,7 +145,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 |---|---|
 | `anytype_list_objects` | 列出当前空间的对象（**已过滤聊天/系统对象**） |
 | `anytype_search` | 按文本搜空间内容 |
-| `anytype_read_object` | 读某篇的标题和正文 |
+| `anytype_read_object` | 读某篇的**标题、正文，以及页面里的图片**（图片会下载→缩放→作为图片内容发给多模态模型，所以它能"看图"） |
 | `anytype_create_note` | 新建页面 |
 | pi 内置 | 读写文件、跑命令、搜索等（完整 agent） |
 

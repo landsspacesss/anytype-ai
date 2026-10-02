@@ -19,6 +19,8 @@
 | Anytype 操作 | 计划由 `anytype-mcp` 提供 | **自定义 pi 工具**（`anytype_list_objects`/`search`/`read_object`/`create_note`） | pi-core 不内置 MCP；自定义工具无子进程、复用已有 `AnytypeClient` |
 | 容器基础镜像 | node:20 | **node:22** | pi 依赖的 undici 在 Node 20 上会崩 |
 | 会话作用域 | 每 `chat_id` 一个 omp 进程 | **每 `chat_id` 一个内嵌 pi 会话** | 保留原语义，换实现 |
+| 模型 | 未指定 | **DeepSeek V4.1（`deepseek-flash`，多模态）**，经 `docker/models.json` 手工注册（pi 内置表无 V4.1）；`PI_MODEL` 可切 |
+| 看图能力 | 未涉及 | **支持**：`anytype_read_object` 下载页面图片 → sharp 缩放到 ≤1600px/JPEG → 作为图片内容发给模型 |
 | 记忆作用域 | 每 `space_id` | **每 `space_id`**（工作区目录 + MEMORY.md） | 不变 |
 | 网络 | 计划用 docker 网络 + 服务名 | **`network_mode: service:anytype-cli`**（共享 netns，走 `127.0.0.1:31012`） | anytype-cli 的 API 只绑回环且校验 Host 头，服务名 origin 被 403 |
 
