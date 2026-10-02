@@ -408,6 +408,12 @@ export function createAnytypeTools(deps: {
      * by main; absent in contexts that cannot perform the join.
      */
     joinSpace?: (link: string) => Promise<{ ok: boolean; message: string }>;
+    /**
+     * One-shot worker bound to a target space: run `task` there and return its
+     * reply. Injected by the console session (pi-session); the corresponding
+     * `anytype_run_in_space` tool is registered only when this is present.
+     */
+    runInSpace?: (space: string, task: string) => Promise<string>;
   };
 }): ToolDefinition[] {
   const {

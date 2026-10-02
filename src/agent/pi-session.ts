@@ -14,7 +14,7 @@ import { DEFAULT_INTERRUPT_POLICY } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
 import { DEFAULT_WATCH_CRON } from "../watch/store.js";
-import { createAnytypeTools } from "./anytype-tools.js";
+import { createAnytypeTools, resolveSpaceId } from "./anytype-tools.js";
 import { SubagentRegistry } from "./subagents.js";
 import type { ChildAgent } from "./subagents.js";
 import { SAFE_TOOLS, needsApproval, type ApprovalMode, type ApprovalGate } from "./approval.js";
@@ -265,15 +265,19 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   }
   // Build a fresh, isolated child session. The child gets the same Anytype
   // tools but NO subagent/agent tool, so it cannot recurse.
-  const createChildAgent = async (): Promise<ChildAgent> => {
-    const { session: child } = await createAgentSession({
-      cwd: opts.cwd,
+  const createChildAgent = async (
+    child: { spaceId?: string; cwd?: string; readOnly?: boolean } = {},
+  ): Promise<ChildAgent> => {
+    const childSpace = child.spaceId ?? opts.spaceId;
+    const childCwd = child.cwd ?? opts.cwd;
+    const { session: childSession } = await createAgentSession({
+      cwd: childCwd,
       agentDir: opts.agentDir,
       authStorage,
       modelRegistry,
       sessionManager: SessionManager.inMemory(),
       customTools: createAnytypeTools({
-        api: opts.api, spaceId: opts.spaceId, workspaceDir: opts.cwd, store: opts.store,
+        api: opts.api, spaceId: childSpace, workspaceDir: childCwd, store: opts.store,
         chatId: opts.chatId, defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
         searchApiKey: opts.searchApiKey ?? "", searchModel: opts.searchModel,
         lightpandaBin: opts.lightpandaBin, webFetchTimeoutMs: opts.webFetchTimeoutMs,
@@ -283,36 +287,45 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       }),
       ...(model ? { model: model as never } : {}),
     });
-    // Children inherit the parent's read-only restriction: they have no
-    // subagent/agent tool, so the safe set alone makes them read-only too.
-    if (approvalMode === "readonly") {
-      child.setActiveToolsByName([...SAFE_TOOLS]);
+    // Children are read-only when the parent is readonly, or when explicitly asked.
+    if (child.readOnly || approvalMode === "readonly") {
+      childSession.setActiveToolsByName([...SAFE_TOOLS]);
     }
     let collected = "";
-    const unsub = child.subscribe((e) => {
+    const unsub = childSession.subscribe((e) => {
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
         collected += e.assistantMessageEvent.delta;
       }
     });
     return {
-      get busy(): boolean {
-        return child.isStreaming;
-      },
-      async prompt(text: string): Promise<string> {
-        collected = "";
-        await child.prompt(text);
-        return collected;
-      },
-      dispose(): void {
-        unsub();
-        child.dispose();
-      },
+      get busy(): boolean { return childSession.isStreaming; },
+      async prompt(text: string): Promise<string> { collected = ""; await childSession.prompt(text); return collected; },
+      dispose(): void { unsub(); childSession.dispose(); },
     };
   };
 
   // One-shot delegation: a fresh child per call, disposed when the task ends.
   const runSubagent = async (task: string): Promise<string> => {
     const a = await createChildAgent();
+    try {
+      return await a.prompt(task);
+    } finally {
+      a.dispose();
+    }
+  };
+
+  /**
+   * One-shot WORKER bound to a TARGET space: runs `task` in that space's
+   * workspace (its AGENTS.md/MEMORY.md) with the full tool set (minus
+   * subagent/agent, so no recursion), then disposes. `space` may be an id or
+   * a name. Only the console uses this.
+   */
+  const runInSpace = async (space: string, task: string): Promise<string> => {
+    if (!opts.agentWorkspaceRoot) throw new Error("runInSpace: agentWorkspaceRoot not set");
+    const spaceId = await resolveSpaceId(opts.api, space, opts.spaceId);
+    const cwd = path.join(opts.agentWorkspaceRoot, spaceId);
+    ensureAgentFiles(cwd); // seed that space's AGENTS.md/MEMORY.md contract
+    const a = await createChildAgent({ spaceId, cwd });
     try {
       return await a.prompt(task);
     } finally {
@@ -399,6 +412,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
             console: {
               workspaceRoot: opts.agentWorkspaceRoot!,
               ...(opts.console?.joinSpace ? { joinSpace: opts.console.joinSpace } : {}),
+              runInSpace,
             },
           }
         : {}),
