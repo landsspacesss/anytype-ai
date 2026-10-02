@@ -20,6 +20,7 @@ function rec(over: Partial<WatchRecord> = {}): WatchRecord {
     chatId: "chat1",
     label: "Note 1",
     snapshot: [{ id: "b1", text: "hi" }],
+    cron: "*/30 * * * *",
     ...over,
   };
 }
@@ -89,6 +90,39 @@ describe("WatchStore", () => {
     expect(b.all()).toHaveLength(2);
     expect(b.get("sp1", "obj1")).toEqual(rec());
     expect(b.get("sp2", "obj2")?.label).toBe("Note 2");
+  });
+
+  it("round-trips cron and lastFiredMinute", () => {
+    const file = tmpFile();
+    const a = new WatchStore(file);
+    a.load();
+    a.upsert(rec({ cron: "0 9 * * 1-5", lastFiredMinute: "2026-10-02T09:00" }));
+    a.save();
+
+    const b = new WatchStore(file);
+    b.load();
+    const got = b.get("sp1", "obj1");
+    expect(got?.cron).toBe("0 9 * * 1-5");
+    expect(got?.lastFiredMinute).toBe("2026-10-02T09:00");
+  });
+
+  it("defaults cron for legacy records and tolerates a custom default", () => {
+    const file = tmpFile();
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        watches: [{ objectId: "old", spaceId: "sp1", chatId: "chat1", label: "Old", snapshot: [] }],
+      }),
+      "utf-8",
+    );
+    const store = new WatchStore(file);
+    store.load();
+    expect(store.get("sp1", "old")?.cron).toBe("*/30 * * * *");
+    expect(store.get("sp1", "old")?.lastFiredMinute).toBeUndefined();
+
+    const custom = new WatchStore(file, "0 9 * * *");
+    custom.load();
+    expect(custom.get("sp1", "old")?.cron).toBe("0 9 * * *");
   });
 
   it("upsert replaces an existing record and get/forSpace/remove work", () => {

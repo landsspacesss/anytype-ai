@@ -51,40 +51,50 @@ export interface PollDeps {
 }
 
 /**
- * Poll every watched object once and notify the originating chat on change.
+ * Poll a single watched object once and notify on change.
  *
  * Anytype has no object-change event stream, so this is a poll + diff: fetch
- * each object, snapshot its blocks, and compare to the stored fingerprint. A
+ * the object, snapshot its blocks, and compare to the stored fingerprint. A
  * record whose object is gone (fetch throws) is reported and unsubscribed.
- * Failures are isolated per record so one bad watch can't abort the poll.
+ * Never throws — a failure is logged so the caller can continue.
+ */
+export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void> {
+  try {
+    let doc: unknown;
+    try {
+      doc = await deps.api.getObjectRaw(rec.spaceId, rec.objectId);
+    } catch {
+      // Object missing/deleted (or otherwise unreadable): notify + unsubscribe.
+      try {
+        await deps.notify(rec, `订阅的对象『${rec.label}』已不存在，已取消订阅`);
+      } catch {
+        // Notification failure must not stop the removal.
+      }
+      deps.store.remove(rec.spaceId, rec.objectId);
+      deps.store.save();
+      return;
+    }
+
+    const next = snapshotOf(doc);
+    if (JSON.stringify(next) === JSON.stringify(rec.snapshot)) return; // unchanged
+
+    const diff = diffSnapshots(rec.snapshot, next);
+    await deps.notify(rec, summarizeChange(rec.label, diff));
+    rec.snapshot = next;
+    deps.store.save();
+  } catch (err) {
+    console.warn(`pollWatch: watch ${rec.objectId} failed: ${String(err)}`);
+  }
+}
+
+/**
+ * Poll EVERY watched object once, ignoring its schedule, and notify on change.
+ * Used by tests and by the tool's `check`-all / on-demand paths; the scheduled
+ * per-watch checks go through `pollDueWatches` instead. Failures are isolated
+ * per record so one bad watch can't abort the poll.
  */
 export async function pollWatches(deps: PollDeps): Promise<void> {
   for (const rec of deps.store.all()) {
-    try {
-      let doc: unknown;
-      try {
-        doc = await deps.api.getObjectRaw(rec.spaceId, rec.objectId);
-      } catch {
-        // Object missing/deleted (or otherwise unreadable): notify + unsubscribe.
-        try {
-          await deps.notify(rec, `订阅的对象『${rec.label}』已不存在，已取消订阅`);
-        } catch {
-          // Notification failure must not stop the removal.
-        }
-        deps.store.remove(rec.spaceId, rec.objectId);
-        deps.store.save();
-        continue;
-      }
-
-      const next = snapshotOf(doc);
-      if (JSON.stringify(next) === JSON.stringify(rec.snapshot)) continue; // unchanged
-
-      const diff = diffSnapshots(rec.snapshot, next);
-      await deps.notify(rec, summarizeChange(rec.label, diff));
-      rec.snapshot = next;
-      deps.store.save();
-    } catch (err) {
-      console.warn(`pollWatches: watch ${rec.objectId} failed: ${String(err)}`);
-    }
+    await pollWatch(rec, deps);
   }
 }

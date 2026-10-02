@@ -10,7 +10,7 @@ import { SessionManager } from "./session/manager.js";
 import { Router } from "./router/router.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
-import { pollWatches } from "./watch/poller.js";
+import { pollDueWatches } from "./watch/scheduler.js";
 import type { NormalizedEvent } from "./types.js";
 
 /** Agent memory scope is per-SPACE: one workspace directory per space id. */
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   // Durable object-change subscriptions, persisted under the workspace root so
   // they survive restarts. Loaded once at boot; the poll loop below keeps them
   // fresh. (Anytype has no object event stream, so we poll + diff.)
-  const watchStore = new WatchStore(path.join(cfg.agentWorkspaceRoot, "watches.json"));
+  const watchStore = new WatchStore(path.join(cfg.agentWorkspaceRoot, "watches.json"), cfg.watchDefaultCron);
   watchStore.load();
 
   const sessions = new SessionManager({
@@ -60,6 +60,7 @@ async function main(): Promise<void> {
         spaceId,
         store: watchStore,
         chatId,
+        defaultWatchCron: cfg.watchDefaultCron,
         modelId: cfg.piModel,
       });
     },
@@ -226,14 +227,15 @@ async function main(): Promise<void> {
     void sessions.reapIdle();
   }, Math.min(cfg.idleReapMs, 60000));
 
-  // Poll watched objects and notify their originating chat on change. Overlapping
-  // runs are skipped (same guard style as `discovering`). A freshly added watch
-  // is already baselined by the tool, so it does not notify on the first poll.
+  // Tick the cron scheduler: each watch is checked only when its own cron
+  // matches the current (local) minute. Overlapping runs are skipped (same guard
+  // style as `discovering`). A freshly added watch is already baselined by the
+  // tool, so it does not notify on the first check.
   let polling = false;
   const watchTimer = setInterval(() => {
     if (polling) return;
     polling = true;
-    void pollWatches({
+    void pollDueWatches({
       store: watchStore,
       api,
       notify: async (rec, text) => {
@@ -245,7 +247,7 @@ async function main(): Promise<void> {
       .finally(() => {
         polling = false;
       });
-  }, cfg.watchPollMs);
+  }, cfg.watchTickMs);
 
   const shutdown = async (): Promise<void> => {
     controller.abort();

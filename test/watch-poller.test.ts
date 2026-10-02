@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { WatchStore, type WatchRecord } from "../src/watch/store.js";
-import { pollWatches, summarizeChange } from "../src/watch/poller.js";
+import { pollWatch, pollWatches, summarizeChange } from "../src/watch/poller.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
 
 function tmpFile(): string {
@@ -17,7 +17,7 @@ function docWith(texts: Record<string, string>): unknown {
 function seededStore(snapshot: Array<{ id: string; text: string }>): WatchStore {
   const store = new WatchStore(tmpFile());
   store.load();
-  store.upsert({ objectId: "obj1", spaceId: "sp1", chatId: "chat1", label: "Note 1", snapshot });
+  store.upsert({ objectId: "obj1", spaceId: "sp1", chatId: "chat1", label: "Note 1", snapshot, cron: "*/30 * * * *" });
   return store;
 }
 
@@ -44,6 +44,20 @@ describe("summarizeChange", () => {
     });
     expect(summary).toContain("新增 1 处"); // still counted
     expect(summary).not.toContain("新增：");
+  });
+});
+
+describe("pollWatch", () => {
+  it("notifies and advances the snapshot for a single record", async () => {
+    const store = seededStore([{ id: "b1", text: "hello" }]);
+    const rec = store.get("sp1", "obj1")!;
+    const api = { getObjectRaw: vi.fn(async () => docWith({ b1: "changed" })) } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(rec, { store, api, notify });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(rec.snapshot).toEqual([{ id: "b1", text: "changed" }]);
   });
 });
 
@@ -105,8 +119,8 @@ describe("pollWatches", () => {
   it("isolates a failing record so other watches still poll", async () => {
     const store = new WatchStore(tmpFile());
     store.load();
-    store.upsert({ objectId: "bad", spaceId: "sp1", chatId: "c", label: "Bad", snapshot: [] });
-    store.upsert({ objectId: "good", spaceId: "sp1", chatId: "c", label: "Good", snapshot: [] });
+    store.upsert({ objectId: "bad", spaceId: "sp1", chatId: "c", label: "Bad", snapshot: [], cron: "* * * * *" });
+    store.upsert({ objectId: "good", spaceId: "sp1", chatId: "c", label: "Good", snapshot: [], cron: "* * * * *" });
     const api = {
       getObjectRaw: vi.fn(async (_space: string, id: string) => {
         if (id === "bad") throw new Error("boom");

@@ -9,6 +9,7 @@ import {
 import type { ManagedClient } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
+import { DEFAULT_WATCH_CRON } from "../watch/store.js";
 import { createAnytypeTools } from "./anytype-tools.js";
 
 export interface PiClientOptions {
@@ -24,6 +25,8 @@ export interface PiClientOptions {
   store: WatchStore;
   /** The chat this session belongs to — watch notifications go back here. */
   chatId: string;
+  /** Default cron for new watches (env WATCH_DEFAULT_CRON). */
+  defaultWatchCron?: string;
   /** Model id to use (e.g. "deepseek-flash"). Defaults to pi's own default. */
   modelId?: string;
 }
@@ -85,6 +88,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       workspaceDir: opts.cwd,
       store: opts.store,
       chatId: opts.chatId,
+      defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
     }),
     ...(model ? { model: model as never } : {}),
   });

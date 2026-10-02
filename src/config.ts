@@ -38,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),
     idleReapMs: num(env, "IDLE_REAP_MS", 900000),
     replyMaxLen: posInt(env, "REPLY_MAX_LEN", 4000),
-    watchPollMs: posInt(env, "WATCH_POLL_MS", 120000),
+    watchTickMs: posInt(env, "WATCH_TICK_MS", 60000),
+    watchDefaultCron: env.WATCH_DEFAULT_CRON || "*/30 * * * *",
   };
 }

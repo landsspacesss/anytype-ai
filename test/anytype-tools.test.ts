@@ -47,6 +47,7 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
     ]),
     createCollection: vi.fn(async () => ({ id: "coll-1" })),
     uploadFile: vi.fn(async () => ({ id: "file-1" })),
+    sendMessage: vi.fn(async () => {}),
   };
   return { ...base, ...overrides } as unknown as AnytypeClient;
 }
@@ -86,9 +87,17 @@ async function run(tool: { execute: (...a: unknown[]) => unknown }, params: unkn
 
 const SPACE = "pqdthe";
 const CHAT = "chat-42";
+const DEFAULT_CRON = "*/30 * * * *";
 
 function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: string = CHAT) {
-  return createAnytypeTools({ api, spaceId: SPACE, workspaceDir: tmpWorkspace(), store, chatId });
+  return createAnytypeTools({
+    api,
+    spaceId: SPACE,
+    workspaceDir: tmpWorkspace(),
+    store,
+    chatId,
+    defaultWatchCron: DEFAULT_CRON,
+  });
 }
 
 describe("createAnytypeTools", () => {
@@ -294,6 +303,7 @@ describe("createAnytypeTools", () => {
       workspaceDir: ws,
       store: fakeStore(),
       chatId: CHAT,
+      defaultWatchCron: DEFAULT_CRON,
     });
 
     const cropped = await run(toolByName(tools, "crop_image"), { path: file, x: 0, y: 0, width: 0.5, height: 0.5 });
@@ -695,10 +705,122 @@ describe("createAnytypeTools", () => {
         { id: "b2", text: "" },
         { id: "b3", text: "第二段内容" },
       ],
+      cron: DEFAULT_CRON,
     });
     expect(store.save).toHaveBeenCalled();
     expect(res.content[0].text).toContain("已订阅");
     expect(res.content[0].text).toContain("日常试卷1");
+    expect(res.content[0].text).toContain("每 30 分钟");
+  });
+
+  it("anytype_watch add stores an explicit cron", async () => {
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      cron: "0 9 * * 1-5",
+    });
+    expect((store.upsert.mock.calls[0][0] as WatchRecord).cron).toBe("0 9 * * 1-5");
+    expect(res.content[0].text).toContain("工作日 09:00");
+  });
+
+  it("anytype_watch add rejects an invalid cron", async () => {
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      cron: "not a cron",
+    });
+    expect(store.upsert).not.toHaveBeenCalled();
+    expect(res.content[0].text).toContain("cron 表达式无效");
+  });
+
+  it("anytype_watch schedule updates the cron and resets lastFiredMinute", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [],
+      cron: DEFAULT_CRON,
+      lastFiredMinute: "2026-10-02T09:00",
+    };
+    store.get = vi.fn(() => record);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+      cron: "0 9 * * *",
+    });
+    expect(record.cron).toBe("0 9 * * *");
+    expect(record.lastFiredMinute).toBeUndefined();
+    expect(store.save).toHaveBeenCalled();
+    expect(res.content[0].text).toContain("每天 09:00");
+  });
+
+  it("anytype_watch schedule requires id and cron and rejects invalid cron", async () => {
+    const store = fakeStore();
+    const noId = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      cron: "0 9 * * *",
+    });
+    expect(noId.content[0].text).toMatch(/id/);
+
+    const noCron = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+    });
+    expect(noCron.content[0].text).toMatch(/cron/);
+
+    store.get = vi.fn(() => undefined);
+    const bad = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "schedule",
+      id: "obj1",
+      cron: "99 * * * *",
+    });
+    expect(bad.content[0].text).toContain("cron 表达式无效");
+  });
+
+  it("anytype_watch check polls now and reports a change", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [{ id: "b1", text: "旧内容" }],
+      cron: DEFAULT_CRON,
+    };
+    store.get = vi.fn(() => record);
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api, store), "anytype_watch"), {
+      action: "check",
+      id: "obj1",
+    });
+    expect(api.sendMessage).toHaveBeenCalled();
+    expect(res.content[0].text).toContain("内容有更新");
+  });
+
+  it("anytype_watch check reports no change when the snapshot matches", async () => {
+    const store = fakeStore();
+    const record: WatchRecord = {
+      objectId: "obj1",
+      spaceId: SPACE,
+      chatId: CHAT,
+      label: "日常试卷1",
+      snapshot: [
+        { id: "b1", text: "第一段内容" },
+        { id: "b2", text: "" },
+        { id: "b3", text: "第二段内容" },
+      ],
+      cron: DEFAULT_CRON,
+    };
+    store.get = vi.fn(() => record);
+    const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), {
+      action: "check",
+      id: "obj1",
+    });
+    expect(res.content[0].text).toContain("内容没有变化");
   });
 
   it("anytype_watch add honors an explicit label", async () => {
@@ -740,17 +862,17 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("没有找到");
   });
 
-  it("anytype_watch list renders label + id + chat", async () => {
+  it("anytype_watch list renders label + schedule + id", async () => {
     const store = fakeStore();
     store.forSpace = vi.fn(() => [
-      { objectId: "obj1", spaceId: SPACE, chatId: CHAT, label: "日常试卷1", snapshot: [] },
+      { objectId: "obj1", spaceId: SPACE, chatId: CHAT, label: "日常试卷1", snapshot: [], cron: "0 9 * * *" },
     ]);
     const res = await run(toolByName(mkTools(fakeApi(), store), "anytype_watch"), { action: "list" });
     expect(store.forSpace).toHaveBeenCalledWith(SPACE);
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
     expect(text).toContain("obj1");
-    expect(text).toContain(CHAT);
+    expect(text).toContain("每天 09:00");
   });
 
   it("anytype_watch list reports an empty subscription set", async () => {

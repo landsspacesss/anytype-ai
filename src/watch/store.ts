@@ -11,6 +11,10 @@ export interface BlockSnap {
  * One object-change subscription: which object to watch, in which space, and
  * which chat to notify in (the chat the subscription was made from). `snapshot`
  * is the last-seen block state — the change fingerprint and the diff base.
+ *
+ * `cron` is the 5-field schedule (local time) at which the object is checked;
+ * `lastFiredMinute` records the local minute key (`YYYY-MM-DDTHH:MM`) of the last
+ * fire so a watch fires at most once per matching minute (crash-safe re-entry).
  */
 export interface WatchRecord {
   objectId: string;
@@ -18,6 +22,8 @@ export interface WatchRecord {
   chatId: string;
   label: string;
   snapshot: BlockSnap[];
+  cron: string;
+  lastFiredMinute?: string;
 }
 
 /**
@@ -61,16 +67,21 @@ export function diffSnapshots(
   return { added, removed, changed };
 }
 
+/** Fallback cron for legacy records loaded without a schedule field. */
+export const DEFAULT_WATCH_CRON = "*/30 * * * *";
+
 /**
  * Durable set of object-change subscriptions, backed by a single JSON file
  * (`{ "watches": WatchRecord[] }`). Records are keyed by (spaceId, objectId).
  * A missing or corrupt file is tolerated: the store simply starts empty.
+ *
+ * `defaultCron` is applied to legacy records that predate the `cron` field.
  */
 export class WatchStore {
   private records = new Map<string, WatchRecord>();
   private loaded = false;
 
-  constructor(private filePath: string) {}
+  constructor(private filePath: string, private defaultCron: string = DEFAULT_WATCH_CRON) {}
 
   private key(spaceId: string, objectId: string): string {
     return `${spaceId}::${objectId}`;
@@ -103,13 +114,17 @@ export class WatchStore {
               })
           : [];
         const label = typeof rec.label === "string" ? rec.label : rec.objectId;
-        this.records.set(this.key(rec.spaceId, rec.objectId), {
+        const cron = typeof rec.cron === "string" && rec.cron.length > 0 ? rec.cron : this.defaultCron;
+        const record: WatchRecord = {
           objectId: rec.objectId,
           spaceId: rec.spaceId,
           chatId: rec.chatId,
           label,
           snapshot,
-        });
+          cron,
+        };
+        if (typeof rec.lastFiredMinute === "string") record.lastFiredMinute = rec.lastFiredMinute;
+        this.records.set(this.key(rec.spaceId, rec.objectId), record);
       }
     } catch {
       // Missing or corrupt file — start empty rather than crash.

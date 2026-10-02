@@ -44,6 +44,8 @@ export interface Config {
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;
-  /** How often to poll watched objects for changes (env WATCH_POLL_MS). */
-  watchPollMs: number;
+  /** How often the cron scheduler ticks to check which watches are due (env WATCH_TICK_MS). */
+  watchTickMs: number;
+  /** Default cron for watches that don't specify one (env WATCH_DEFAULT_CRON). */
+  watchDefaultCron: string;
 }

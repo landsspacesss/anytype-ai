@@ -160,12 +160,12 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_create_collection` | 建**集合**（把对象归类到一起）|
 | `anytype_collection_items` | 给集合**加/移**对象 |
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
-| `anytype_watch` | **订阅**某篇笔记，内容一变就在这里**通知**（`action: add/remove/list`）|
+| `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查，内容一变就在这里**通知**（`action: add/remove/list/schedule/check`）|
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
 
 > **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
 >
-> **订阅是轮询式的**（间隔 `WATCH_POLL_MS`，默认 120 秒）——因为 Anytype **没有对象变更事件流**。订阅记录存在 `/workspace/watches.json`，重启不丢。
+> **订阅按 cron 计划检查**——每个订阅有自己的 5 段 cron（分 时 日 月 周，**本地时区**），调度器每 `WATCH_TICK_MS`（默认 60 秒）tick 一次，只检查当前分钟命中的订阅。因为是 Anytype **没有对象变更事件流**，所以仍是「到点拉取 + diff」。新订阅默认 `WATCH_DEFAULT_CRON`（`*/30 * * * *`）。订阅记录存在 `/workspace/watches.json`，重启不丢。
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
 
