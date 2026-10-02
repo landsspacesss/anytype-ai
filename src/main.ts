@@ -17,6 +17,8 @@ import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
 import { readConsole } from "./console/console-store.js";
+import { HeartGrpc } from "./anytype/grpc.js";
+import { bootstrapFromLink, botOneToOneLink, newRequestKey } from "./console/bootstrap.js";
 import type { ChatTarget, NormalizedEvent } from "./types.js";
 
 /** Agent memory scope is per-SPACE: one workspace directory per space id. */
@@ -45,6 +47,25 @@ async function main(): Promise<void> {
   const consoleRec = readConsole(consoleFile);
   const consoleSpaceId = cfg.consoleSpaceId ?? consoleRec?.spaceId;
   const isConsoleSpace = (spaceId: string): boolean => !!consoleSpaceId && spaceId === consoleSpaceId;
+
+  // Heart gRPC client + the link-driven bootstrap, shared by `/join` and the
+  // `anytype_join_space` tool. The client is lazy (connects on first call).
+  const grpcClient = new HeartGrpc({});
+  const joinSpace = async (link: string): Promise<{ ok: boolean; message: string }> => {
+    if (!cfg.consoleSpaceId) {
+      const r = await bootstrapFromLink(grpcClient, link, consoleFile);
+      if (!r.ok) return { ok: false, message: `接入失败：${r.error}` };
+      if (r.kind === "onetoone") {
+        return {
+          ok: true,
+          message: `已接入控制台（空间 ${r.spaceId}）。重启后生效：docker compose ... up -d --force-recreate --no-deps ai-bot`,
+        };
+      }
+      return { ok: true, message: `已加入空间（邀请链接）` };
+    }
+    const r = await bootstrapFromLink(grpcClient, link, consoleFile);
+    return { ok: r.ok, message: r.ok ? "已完成" : `失败：${r.error}` };
+  };
 
   const api = new AnytypeClient({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey });
   const controller = new AbortController();
@@ -108,6 +129,9 @@ async function main(): Promise<void> {
         resume: sessions.resumeFor(chatId),
         isConsole: consoleSession,
         agentWorkspaceRoot: cfg.agentWorkspaceRoot,
+        // The console session gets the join implementation (drives
+        // `anytype_join_space`); passed through only when it is a console.
+        ...(consoleSession ? { console: { workspaceRoot: cfg.agentWorkspaceRoot, joinSpace } } : {}),
         // A brand-new client adopts the chat's current interrupt policy, so a
         // policy set via /interrupt survives an idle-reap/rebuild.
         interruptPolicy: sessions.getInterruptPolicy(chatId),
@@ -185,6 +209,7 @@ async function main(): Promise<void> {
             defaultModel: cfg.piModel,
             getInterruptPolicy: () => sessions.getInterruptPolicy(e.chatId),
             setInterruptPolicy: (p) => sessions.setInterruptPolicy(e.chatId, p),
+            joinSpace,
           };
           const reply = await handleCommand(parsed.command, parsed.args, ctx);
           if (reply && reply.trim().length > 0) {
@@ -305,6 +330,17 @@ async function main(): Promise<void> {
   }
 
   await discover();
+
+  // No console configured yet: print the bot's own 1:1 link (best-effort) so a
+  // human can connect one, or send the bot a link to /join.
+  if (!consoleSpaceId) {
+    const botId = cfg.botIdentity ?? "(bot identity unknown)";
+    const link = botOneToOneLink(botId, newRequestKey());
+    console.log(
+      `\n=== 控制台未设置 ===\n把你的 1:1 链接发给 bot（或运行 /join <链接>）即可接入控制台。\n` +
+        `（bot 侧链接，打开后可能仍需把你自己链接回贴一次：${link}）\n`,
+    );
+  }
 
   // Re-scan periodically so newly created chats are subscribed automatically.
   const discoverTimer = setInterval(() => {

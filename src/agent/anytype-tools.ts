@@ -399,6 +399,11 @@ export function createAnytypeTools(deps: {
   console?: {
     /** Root dir holding per-space workspaces (`/workspace`). */
     workspaceRoot: string;
+    /**
+     * Join a space / connect the 1:1 console from a user-shared link. Provided
+     * by main; absent in contexts that cannot perform the join.
+     */
+    joinSpace?: (link: string) => Promise<{ ok: boolean; message: string }>;
   };
 }): ToolDefinition[] {
   const {
@@ -1634,6 +1639,27 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const joinSpace = defineTool({
+    name: "anytype_join_space",
+    label: "Join a space",
+    description:
+      "Join a space from a link the user shared. An INVITE link adds the assistant to that shared space; a 1:1 (hi.any.coop) link connects the assistant to the user's one-to-one console. Only call this when the user clearly asks to join / connect using a link they provided.",
+    promptSnippet: "anytype_join_space — join a space or connect the 1:1 console from a link",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      link: Type.String({ description: "The invite or 1:1 link to act on." }),
+    }),
+    async execute(_id, params) {
+      if (!consoleDep?.joinSpace) return textResult("anytype_join_space unavailable in this session.");
+      try {
+        const r = await consoleDep.joinSpace(params.link);
+        return textResult(r.message);
+      } catch (err) {
+        return textResult(`anytype_join_space failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1670,7 +1696,7 @@ export function createAnytypeTools(deps: {
 
   // Cross-space read tools and the memory aggregate are only for the global
   // console session.
-  if (consoleDep) tools.push(listSpaces, memories);
+  if (consoleDep) tools.push(listSpaces, memories, joinSpace);
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so
   // they cannot spawn further sub-agents (no recursion).

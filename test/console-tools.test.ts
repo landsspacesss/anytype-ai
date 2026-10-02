@@ -87,6 +87,17 @@ describe("console tool gating", () => {
     expect(text).toContain("hello-global");
     expect(text).toContain("_global");
   });
+
+  it("anytype_join_space is only in console sessions", async () => {
+    expect(toolNames(createAnytypeTools(baseDeps(fakeApi())))).not.toContain("anytype_join_space");
+    const joinSpace = vi.fn(async () => ({ ok: true, message: "joined" }));
+    const deps = { ...baseDeps(fakeApi(), false), console: { workspaceRoot: "/tmp/ws", joinSpace } };
+    const tools = createAnytypeTools(deps);
+    const t = tools.find((x) => x.name === "anytype_join_space")!;
+    const text = ((await t.execute("id", { link: "https://hi.any.coop/X#Y" })).content[0] as { text: string }).text;
+    expect(joinSpace).toHaveBeenCalledWith("https://hi.any.coop/X#Y");
+    expect(text).toContain("joined");
+  });
 });
 
 describe("collectMemories", () => {

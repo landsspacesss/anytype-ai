@@ -65,6 +65,14 @@ export interface PiClientOptions {
   isConsole?: boolean;
   /** Root dir holding per-space workspaces (used for the console's memory aggregate). */
   agentWorkspaceRoot?: string;
+  /**
+   * Console-only toolbox extras. Only the top-level console session passes this
+   * through to `createAnytypeTools` (which registers `anytype_join_space`).
+   */
+  console?: {
+    workspaceRoot: string;
+    joinSpace?: (link: string) => Promise<{ ok: boolean; message: string }>;
+  };
 }
 
 /** Tool names kept when YOLO / auto-approve mode is OFF (read-only safety set). */
@@ -299,8 +307,16 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       runSubagent,
       agentRegistry,
       // ONLY the top-level console session gets the global dep (cross-space
-      // read + list_spaces + memories). Child sessions never receive it.
-      ...(opts.isConsole ? { console: { workspaceRoot: opts.agentWorkspaceRoot! } } : {}),
+      // read + list_spaces + memories + join_space). Child sessions never
+      // receive it. The injected `joinSpace` (from main) rides along when set.
+      ...(opts.isConsole
+        ? {
+            console: {
+              workspaceRoot: opts.agentWorkspaceRoot!,
+              ...(opts.console?.joinSpace ? { joinSpace: opts.console.joinSpace } : {}),
+            },
+          }
+        : {}),
     }),
     ...(model ? { model: model as never } : {}),
   });

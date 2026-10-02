@@ -19,6 +19,12 @@ export interface CommandContext {
    * already running is interrupted per the new policy.
    */
   setInterruptPolicy(policy: InterruptPolicy): Promise<InterruptPolicy>;
+  /**
+   * Join a space from a link: an invite link adds the bot to that space; a 1:1
+   * link connects the bot to the user's one-to-one console. Returns a
+   * human-readable result message.
+   */
+  joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
 }
 
 /** Thinking levels `/effort` accepts (pi clamps to what the model supports). */
@@ -38,6 +44,7 @@ export const HELP_TEXT = [
   "/effort [档位] — 查看或设置思考级别（档位取决于模型，通常 off|high|max）",
   "/yolo [on|off] — 开关 YOLO 自动模式（默认开）",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
+  "/join <链接> — 加入一个空间（邀请链接）或接入 1:1 控制台（1:1 链接）",
   "/help — 显示本帮助",
 ].join("\n");
 
@@ -135,6 +142,12 @@ export async function handleCommand(
       }
       const applied = await ctx.setInterruptPolicy(policy);
       return `打断策略已设为：${interruptLabel(applied)}（立即生效）`;
+    }
+
+    case "join": {
+      if (!args) return "用法：/join <链接>（邀请链接，或 1:1 链接以接入控制台）";
+      const r = await ctx.joinSpace(args);
+      return r.message;
     }
 
     case "help":

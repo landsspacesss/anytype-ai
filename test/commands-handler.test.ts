@@ -32,6 +32,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     current = p;
     return p;
   });
+  const joinSpace = vi.fn(async () => ({ ok: true, message: "ok" }));
   const context: CommandContext = {
     chatId: "c1",
     getClient: () => client,
@@ -40,8 +41,9 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     defaultModel: "deepseek-flash",
     getInterruptPolicy: () => current,
     setInterruptPolicy,
+    joinSpace,
   };
-  return { context, ensure, reset, setInterruptPolicy, getPolicy: () => current };
+  return { context, ensure, reset, setInterruptPolicy, joinSpace, getPolicy: () => current };
 }
 
 describe("handleCommand", () => {
@@ -214,5 +216,20 @@ describe("handleCommand", () => {
     await expect(handleCommand("interrupt", "", context)).resolves.toContain("打断策略");
     await expect(handleCommand("interrupt", "now", context)).resolves.toContain("立刻打断");
     expect(getPolicy()).toBe("immediate");
+  });
+
+  it("/join delegates to ctx.joinSpace and echoes the result", async () => {
+    const c = fakeClient();
+    const { context } = ctx(c);
+    const joinSpace = vi.fn(async () => ({ ok: true, message: "已加入空间 spNEW" }));
+    const reply = await handleCommand("join", "https://hi.any.coop/X#Y", { ...context, joinSpace });
+    expect(joinSpace).toHaveBeenCalledWith("https://hi.any.coop/X#Y");
+    expect(reply).toContain("已加入空间");
+  });
+
+  it("/join with no arg shows usage", async () => {
+    const { context } = ctx(fakeClient());
+    const reply = await handleCommand("join", "", { ...context, joinSpace: vi.fn() });
+    expect(reply).toMatch(/用法/);
   });
 });
