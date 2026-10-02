@@ -145,7 +145,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 |---|---|
 | `anytype_list_objects` | 列出当前空间的对象（**已过滤聊天/系统对象**） |
 | `anytype_search` | 按文本搜空间内容 |
-| `anytype_read_object` | 读某篇的**标题、正文，以及页面里的图片**（图片会下载→缩放到 ≤1600px→作为图片内容发给多模态模型，所以它能"看图"） |
+| `anytype_read_object` | 读某篇：**正文按块还原成 Markdown**（标题 `#`、列表 `-`/缩进、待办 `- [x]`、代码围栏、引用 `>`、图片 `![名](id)`），并**附带页面图片**（缩放到 ≤1600px 作为图片内容发给多模态模型，所以它能"看图"） |
 | `anytype_download_images` | 把某篇的**图片下载到容器**（`/workspace/<space>/images/<id>/`），返回路径和像素尺寸 |
 | `crop_image` | **查看/裁剪**一张本地图片：给区域比例（x,y,width,height 取 0~1 的小数）就裁剪放大——看小字/手写最有效；不给则看整图 |
 | `anytype_create_note` | 新建页面 |
