@@ -184,6 +184,8 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 
 **触发规则**：被 `@anytype-bot` 时回复；**私聊**（成员 ≤2 的聊天）里每条都回；bot 自己的消息永不触发。
 
+**实时工具反馈**：回合较慢（超过 `TOOL_STATUS_DELAY_MS`，默认 1.5s）时，bot 会在聊天里发一条**占位消息**「⏳ 正在 <工具>(<关键参数>)…」，**随工具调用原地更新**；回合结束**自动撤回**，再发最终答案。用 `TOOL_STATUS=false` 关闭。
+
 **消息附件**：聊天消息带的文件/图片（`attachments`）会**一并告诉 agent**（附上每个的 id 和类型）。它能：**图片**用 `anytype_read_object` 直接看；**其他文件**用 `anytype_download_file` 下载后再用 shell 工具解析。⚠️ 群聊里带附件的消息仍需 **@bot** 才触发（跟普通消息同一规则）。
 
 ### 聊天指令（消息以 `/` 开头）
