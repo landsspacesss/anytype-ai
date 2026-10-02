@@ -1,7 +1,15 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import sharp from "sharp";
 import type { AnytypeClient } from "../anytype/client.js";
+
+/** Cap how many page images we attach per read, and the max edge length. */
+const MAX_IMAGES_PER_READ = 6;
+const MAX_IMAGE_EDGE = 1600;
+const IMAGE_JPEG_QUALITY = 80;
+
+type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 /** Minimal object reference shape returned by the list/search endpoints. */
 interface ObjectRef {
@@ -82,6 +90,44 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Image blocks in a document: their file object id + mime type. */
+function extractImages(doc: unknown): Array<{ objectId: string; mimeType: string }> {
+  if (doc === null || typeof doc !== "object") return [];
+  const blocks = (doc as Record<string, unknown>).blocks;
+  if (!Array.isArray(blocks)) return [];
+  const out: Array<{ objectId: string; mimeType: string }> = [];
+  for (const b of blocks) {
+    if (b === null || typeof b !== "object") continue;
+    const block = b as Record<string, unknown>;
+    if (block.type !== "image") continue;
+    const objectId = block.object_id;
+    const mimeType = block.mime_type;
+    if (typeof objectId === "string" && objectId.length > 0) {
+      out.push({ objectId, mimeType: typeof mimeType === "string" ? mimeType : "image/*" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Downscale an image so it can be sent to the model: cap the long edge and
+ * re-encode as JPEG. Returns base64 + mime type, or null if it isn't a usable
+ * raster image. (Astra/DeepSeek accept jpeg/png/webp; we normalise to jpeg.)
+ */
+async function resizeForModel(buf: Buffer, mimeType: string): Promise<{ data: string; mimeType: string } | null> {
+  if (!mimeType.startsWith("image/")) return null;
+  try {
+    const out = await sharp(buf)
+      .rotate() // honour EXIF orientation
+      .resize({ width: MAX_IMAGE_EDGE, height: MAX_IMAGE_EDGE, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: IMAGE_JPEG_QUALITY })
+      .toBuffer();
+    return { data: out.toString("base64"), mimeType: "image/jpeg" };
+  } catch {
+    return null;
+  }
+}
+
 const GUIDELINES = [
   "You are an AI assistant living INSIDE an Anytype space. The user's notes, pages, and objects live in Anytype — not on the local filesystem.",
   "For ANYTHING about the user's notes, pages, objects, or other content (including questions like \"how many notes are there?\" or \"find my note about X\"), ALWAYS use the `anytype_*` tools instead of listing/reading local workspace files.",
@@ -141,8 +187,8 @@ export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }
     name: "anytype_read_object",
     label: "Read Anytype object",
     description:
-      "Read a single Anytype object by id and return its title and text content. Use the id from anytype_list_objects or anytype_search.",
-    promptSnippet: "anytype_read_object — read an Anytype object's title and content by id",
+      "Read a single Anytype object by id. Returns its title, its text content, and any images on the page (images are attached so you can see them). Use the id from anytype_list_objects or anytype_search.",
+    promptSnippet: "anytype_read_object — read an Anytype object's title, text, and images by id",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       id: Type.String({ description: "The object id to read." }),
@@ -150,7 +196,28 @@ export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }
     async execute(_toolCallId, params) {
       try {
         const doc = await api.getObjectRaw(spaceId, params.id);
-        return textResult(renderObject(doc));
+        const content: Content[] = [{ type: "text", text: renderObject(doc) }];
+
+        // Attach the page's images so the (multimodal) model can actually see
+        // them. Download, downscale, and send as image content.
+        const images = extractImages(doc);
+        const chosen = images.slice(0, MAX_IMAGES_PER_READ);
+        for (const img of chosen) {
+          try {
+            const { data, mimeType } = await api.downloadFileContent(spaceId, img.objectId);
+            const resized = await resizeForModel(data, mimeType);
+            if (resized) content.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
+          } catch {
+            // Skip an image that fails rather than failing the whole read.
+          }
+        }
+        if (images.length > chosen.length) {
+          content.push({
+            type: "text",
+            text: `(attached the first ${chosen.length} of ${images.length} images)`,
+          });
+        }
+        return { content, details: {} };
       } catch (err) {
         return textResult(`anytype_read_object failed: ${errMessage(err)}`);
       }

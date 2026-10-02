@@ -92,6 +92,20 @@ export class AnytypeClient {
     return (await res.json()) as unknown;
   }
 
+  /** Download a file's raw bytes (e.g. an image's `object_id` from a block). */
+  async downloadFileContent(
+    spaceId: string,
+    fileId: string,
+  ): Promise<{ data: Buffer; mimeType: string }> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/files/${fileId}/content`;
+    // NOTE: no Content-Type — this is a binary GET, not JSON.
+    const res = await this.fetchFn(url, { headers: { Authorization: `Bearer ${this.apiKey}` } });
+    if (!res.ok) throw new Error(`downloadFileContent failed: ${res.status}`);
+    const mimeType = res.headers.get("content-type") ?? "application/octet-stream";
+    const data = Buffer.from(await res.arrayBuffer());
+    return { data, mimeType };
+  }
+
   async createObject(
     spaceId: string,
     opts: { name: string; markdown?: string; type?: string },

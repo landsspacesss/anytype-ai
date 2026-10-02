@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createAnytypeTools } from "../src/agent/anytype-tools.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
 
-type ExecResult = { content: Array<{ type: string; text: string }>; details: unknown };
+type ExecResult = { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details: unknown };
 
 function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}): AnytypeClient {
   const base = {
@@ -22,6 +22,7 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
       ],
     })),
     createObject: vi.fn(async () => ({ id: "new-123" })),
+    downloadFileContent: vi.fn(async () => ({ data: Buffer.from([]), mimeType: "image/jpeg" })),
   };
   return { ...base, ...overrides } as unknown as AnytypeClient;
 }
@@ -157,6 +158,31 @@ describe("createAnytypeTools", () => {
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
     expect(text).toContain("4× image");
+  });
+
+  it("attaches page images as image content (downscaled to jpeg)", async () => {
+    const sharp = (await import("sharp")).default;
+    const png = await sharp({
+      create: { width: 4000, height: 100, channels: 3, background: { r: 10, g: 120, b: 200 } },
+    })
+      .png()
+      .toBuffer();
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        properties: { name: "照片页" },
+        blocks: [{ type: "image", object_id: "file-1", mime_type: "image/png" }],
+      })),
+      downloadFileContent: vi.fn(async () => ({ data: png, mimeType: "image/png" })),
+    });
+    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const res = await run(toolByName(tools, "anytype_read_object"), { id: "obj1" });
+    expect(api.downloadFileContent).toHaveBeenCalledWith(SPACE, "file-1");
+    const img = res.content.find((c) => c.type === "image");
+    expect(img).toBeTruthy();
+    expect(img?.mimeType).toBe("image/jpeg");
+    expect((img?.data ?? "").length).toBeGreaterThan(0);
+    // downscaled: 4000px wide -> <= 1600, so the base64 is far smaller than the source
+    expect((img?.data ?? "").length).toBeLessThan(png.length);
   });
 
   it("tolerates malformed objects/blocks when reading", async () => {
