@@ -22,6 +22,31 @@ export function readSessionToken(configPath: string): string | null {
   }
 }
 
+/**
+ * Build the WorkspaceCreate request for a one-to-one space.
+ *
+ * `details` is a google.protobuf.Struct, which protobufjs will SILENTLY DROP if
+ * given a plain object (it must be the explicit `{fields: {name: {<kind>Value}}}`
+ * shape) — otherwise the request goes out with empty details and heart creates a
+ * default space instead of the one-to-one.
+ */
+export function oneToOneWorkspaceCreateRequest(
+  identity: string,
+  key: string,
+): { details: { fields: Record<string, unknown> }; useCase: number } {
+  return {
+    details: {
+      fields: {
+        oneToOneIdentity: { stringValue: identity },
+        oneToOneRequestMetadataKey: { stringValue: key },
+        spaceType: { numberValue: 4 },      // model.SpaceType.OneToOne
+        spaceAccessType: { numberValue: 2 }, // model.SpaceAccessType.Shared
+      },
+    },
+    useCase: 1, // Rpc.Object.ImportUseCase...UseCase.CHAT_SPACE
+  };
+}
+
 const DEFAULT_ADDR = "127.0.0.1:31010";
 const DEFAULT_CONFIG = "/root/.anytype/config.json";
 
@@ -104,10 +129,7 @@ export class HeartGrpc {
 
   /** Mirror a one-to-one space from (identity, key). Returns the new space id. */
   async workspaceCreateOneToOne(identity: string, key: string): Promise<string> {
-    const res = await this.call("WorkspaceCreate", {
-      details: { oneToOneIdentity: identity, oneToOneRequestMetadataKey: key, spaceType: 4, spaceAccessType: 2 },
-      useCase: 1,
-    });
+    const res = await this.call("WorkspaceCreate", oneToOneWorkspaceCreateRequest(identity, key));
     const e = this.errText(res);
     if (e) throw new Error(e);
     if (!res.spaceId) throw new Error("WorkspaceCreate returned no spaceId");
