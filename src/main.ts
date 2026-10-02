@@ -22,6 +22,7 @@ import type { StepContext } from "./workflow/steps.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
+import { cronMatches } from "./watch/cron.js";
 import { readConsole } from "./console/console-store.js";
 import { HeartGrpc } from "./anytype/grpc.js";
 import { bootstrapFromLink, botOneToOneLink, newRequestKey } from "./console/bootstrap.js";
@@ -238,6 +239,44 @@ async function main(): Promise<void> {
     );
   }
 
+  // Workflow run plumbing shared by the manual (`/run`) path and the cron
+  // trigger below. Hoisted to main scope so BOTH use the SAME run store, step
+  // context factory and status emitter — never re-created per call.
+  const runStore = new WorkflowRunStore(cfg.workflowRunDir);
+  // Build a StepContext for the chat that TRIGGERED a run: its `agent` steps run
+  // one-shot children bound to each step's target space, via the same runInSpace
+  // the console worker uses (strict resolve; unknown -> throw).
+  const stepCtxFor = (chatId: string): StepContext => ({
+    api,
+    spaceId: chatTargets.get(chatId)?.spaceId ?? "",
+    workspaceDir: cfg.agentWorkspaceRoot,
+    runAgent: async (space, prompt) => {
+      const c = await sessions.ensure(chatId);
+      if (!c.runInSpace) throw new Error("runInSpace unavailable on client");
+      return c.runInSpace(space, prompt);
+    },
+  });
+  function formatRunEvent(e: RunEvent): string {
+    const head = `▶ ${e.runId} ${e.name}`;
+    switch (e.status) {
+      case "run-start": return `${head} · 开始`;
+      case "running": return e.stepId ? `▶ ${e.stepId} …` : head;
+      case "skipped": return `⏭ ${e.stepId}`;
+      case "failed": return `❌ ${e.stepId}: ${e.detail ?? ""}`;
+      case "done": return e.stepId ? `✅ ${e.stepId}${e.detail ? ` → ${e.detail.split(/\r?\n/)[0].slice(0, 120)}` : ""}` : `${head} · ✅ 完成`;
+      default: return `${head} · ${e.status}`;
+    }
+  }
+  // Lifecycle events go to the status board ONLY when WORKFLOW_STATUS_CHAT is set
+  // AND that chat was discovered (so we know its space). No auto-create.
+  const emitRun = (e: RunEvent): void => {
+    const chatId = cfg.workflowStatusChat;
+    if (!chatId) return;
+    const spaceId = chatTargets.get(chatId)?.spaceId;
+    if (!spaceId) return;
+    void api.sendMessage(spaceId, chatId, formatRunEvent(e), `wf-${e.runId}-${e.stepId ?? e.status}-${++sendSeq}`).catch((err) => console.warn(`workflow status post failed: ${String(err)}`));
+  };
+
   const onEvent = (e: NormalizedEvent): void => {
     void (async () => {
       if (e.objectId) e.contextNote = await discussionContext(e);
@@ -249,41 +288,6 @@ async function main(): Promise<void> {
         const stripped = stripBotMention(e.text, cfg.botDisplayName) || e.text;
         const parsed = parseCommand(stripped);
         if (parsed) {
-          const runStore = new WorkflowRunStore(cfg.workflowRunDir);
-          // Build a StepContext for the chat that TRIGGERED a run: its `agent`
-          // steps run one-shot children bound to each step's target space, via
-          // the same runInSpace the console worker uses (strict resolve; unknown
-          // -> throw).
-          const stepCtxFor = (chatId: string): StepContext => ({
-            api,
-            spaceId: chatTargets.get(chatId)?.spaceId ?? "",
-            workspaceDir: cfg.agentWorkspaceRoot,
-            runAgent: async (space, prompt) => {
-              const c = await sessions.ensure(chatId);
-              if (!c.runInSpace) throw new Error("runInSpace unavailable on client");
-              return c.runInSpace(space, prompt);
-            },
-          });
-          function formatRunEvent(e: RunEvent): string {
-            const head = `▶ ${e.runId} ${e.name}`;
-            switch (e.status) {
-              case "run-start": return `${head} · 开始`;
-              case "running": return e.stepId ? `▶ ${e.stepId} …` : head;
-              case "skipped": return `⏭ ${e.stepId}`;
-              case "failed": return `❌ ${e.stepId}: ${e.detail ?? ""}`;
-              case "done": return e.stepId ? `✅ ${e.stepId}${e.detail ? ` → ${e.detail.split(/\r?\n/)[0].slice(0, 120)}` : ""}` : `${head} · ✅ 完成`;
-              default: return `${head} · ${e.status}`;
-            }
-          }
-          // Lifecycle events go to the status board ONLY when WORKFLOW_STATUS_CHAT
-          // is set AND that chat was discovered (so we know its space). No auto-create.
-          const emitRun = (e: RunEvent): void => {
-            const chatId = cfg.workflowStatusChat;
-            if (!chatId) return;
-            const spaceId = chatTargets.get(chatId)?.spaceId;
-            if (!spaceId) return;
-            void api.sendMessage(spaceId, chatId, formatRunEvent(e), `wf-${e.runId}-${e.stepId ?? e.status}-${++sendSeq}`).catch((err) => console.warn(`workflow status post failed: ${String(err)}`));
-          };
           const doRun = async (chatId: string, name: string, args: string, resumeRunId?: string): Promise<{ ok: boolean; message: string }> => {
             const entry = findWorkflow(cfg.workflowDir, name);
             if (!entry) {
@@ -525,11 +529,39 @@ async function main(): Promise<void> {
       });
   }, cfg.watchTickMs);
 
+  // Workflow cron: each workflow whose `on.cron` matches the current local minute
+  // runs once (guarded per workflow per minute). This is an INDEPENDENT timer,
+  // separate from the object-watch scheduler above; it never touches `watchTimer`
+  // state. A single unparseable workflow is skipped, never crashing the tick.
+  const wfFiredMinute = new Map<string, string>();
+  const wfTimer = setInterval(() => {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}T${now.getHours()}:${now.getMinutes()}`;
+    for (const entry of listWorkflows(cfg.workflowDir)) {
+      let def;
+      try { def = loadWorkflow(entry); } catch { continue; }
+      const cron = def.on?.cron;
+      if (!cron || !cronMatches(cron, now)) continue;
+      if (wfFiredMinute.get(entry.name) === key) continue;
+      wfFiredMinute.set(entry.name, key);
+      const notify = def.on?.notify ?? "";
+      void runWorkflow(def, {
+        store: runStore,
+        ctx: stepCtxFor(notify),
+        chatId: notify,
+        spaceId: chatTargets.get(notify)?.spaceId ?? "",
+        trigger: "cron",
+        emit: emitRun,
+      }).catch((err) => console.warn(`workflow cron '${entry.name}' failed: ${String(err)}`));
+    }
+  }, cfg.watchTickMs);
+
   const shutdown = async (): Promise<void> => {
     controller.abort();
     clearInterval(reaper);
     clearInterval(discoverTimer);
     clearInterval(watchTimer);
+    clearInterval(wfTimer);
     await sessions.shutdown();
     process.exit(0);
   };
