@@ -137,6 +137,8 @@ docker exec anytype-ai-bot-1 cat /workspace/pqdthe/MEMORY.md
 docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模板.md
 ```
 
+**聊天输出纯文本**：AGENTS.md 模板里有一段"聊天输出格式"，要求 bot 在**聊天里发纯文本、不要 Markdown**（标题/粗体/表格/链接等——Anytype 聊天不渲染，会原样显示）。但**写进页面正文**（create_note/insert_markdown）仍用规范 Markdown。想改这条规则就改模板里那段。
+
 ---
 
 ## 6. bot 有哪些能力
