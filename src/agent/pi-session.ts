@@ -245,6 +245,34 @@ export function ensureSkillsConfig(agentDir: string, srcRoot: string = SKILLS_SR
   }
 }
 
+/** Where the baked-in workflows live in the image. */
+const WORKFLOWS_SRC = "/app/workflows";
+
+/**
+ * Copy baked-in workflows (docker/workflows/<name>/workflow.yaml [+ README.md])
+ * into pi's agent dir's `workflows/`. Only fills missing files (never clobbers
+ * a user's copies), same volume-mount reason as skills/models.
+ */
+export function ensureWorkflowsConfig(agentDir: string, srcRoot: string = WORKFLOWS_SRC): void {
+  try {
+    if (!fs.existsSync(srcRoot)) return;
+    const destRoot = path.join(agentDir, "workflows");
+    for (const name of fs.readdirSync(srcRoot)) {
+      for (const f of ["workflow.yaml", "README.md"]) {
+        const src = path.join(srcRoot, name, f);
+        const dest = path.join(destRoot, name, f);
+        if (fs.existsSync(src) && !fs.existsSync(dest)) {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.copyFileSync(src, dest);
+          console.log(`wrote workflow: ${dest}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`ensureWorkflowsConfig failed: ${String(err)}`);
+  }
+}
+
 /** Find a model by id, preferring the deepseek provider. */
 function resolveModel(registry: ModelRegistry, modelId: string): unknown | undefined {
   const all = (registry as unknown as { getAll?: () => Array<{ id: string; provider?: string }> }).getAll?.() ?? [];

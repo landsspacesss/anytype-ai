@@ -6,7 +6,7 @@ import { AnytypeClient } from "./anytype/client.js";
 import { resolveBotParticipantId } from "./anytype/members.js";
 import { extractDiscussionId } from "./anytype/discussion.js";
 import { subscribeChat } from "./anytype/stream.js";
-import { createPiClient, ensureAgentFiles, ensureModelsConfig, ensureSkillsConfig } from "./agent/pi-session.js";
+import { createPiClient, ensureAgentFiles, ensureModelsConfig, ensureSkillsConfig, ensureWorkflowsConfig } from "./agent/pi-session.js";
 import { ApprovalGate } from "./agent/approval.js";
 import type { ApprovalMode } from "./agent/approval.js";
 import { SessionManager } from "./session/manager.js";
@@ -44,6 +44,7 @@ async function main(): Promise<void> {
   // Copy the baked-in pi skills (docker/skills/) into the agent dir, same
   // volume-mount workaround as models.json.
   ensureSkillsConfig(agentDir);
+  ensureWorkflowsConfig(agentDir);
 
   // The global-console space: one space with cross-space read powers and a
   // shared workspace. Stage 1 has no auto-bootstrap — a human writes
