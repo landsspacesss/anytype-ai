@@ -60,7 +60,19 @@ function renderObject(doc: unknown): string {
   if (bodyText.length > 0) {
     lines.push("", bodyText.join("\n"));
   } else {
-    lines.push("", "(no text content)");
+    // No text — but don't call the page "empty": describe what IS there (e.g. images).
+    const counts = new Map<string, number>();
+    for (const b of blocks) {
+      if (b === null || typeof b !== "object") continue;
+      const t = typeof (b as Record<string, unknown>).type === "string"
+        ? ((b as Record<string, unknown>).type as string)
+        : "unknown";
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    const summary = counts.size > 0
+      ? [...counts].map(([t, n]) => `${n}× ${t}`).join(", ")
+      : "none";
+    lines.push("", `(no text content; ${blocks.length} block(s): ${summary})`);
   }
   return lines.join("\n");
 }

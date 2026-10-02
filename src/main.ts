@@ -56,8 +56,36 @@ async function main(): Promise<void> {
     send: (target, text) => sink.send(target, text),
   });
 
+  // Cache of object id -> display name, used to tell the agent which page a
+  // discussion comment belongs to.
+  const objectNames = new Map<string, string>();
+  async function discussionContext(e: NormalizedEvent): Promise<string | undefined> {
+    if (!e.objectId) return undefined;
+    let name = objectNames.get(e.objectId);
+    if (name === undefined) {
+      try {
+        const doc = (await api.getObjectRaw(e.spaceId, e.objectId)) as
+          | { properties?: { name?: unknown } }
+          | null;
+        const n = doc?.properties?.name;
+        name = typeof n === "string" ? n : "";
+      } catch {
+        name = "";
+      }
+      objectNames.set(e.objectId, name);
+    }
+    const label = name ? `「${name}」` : `（id ${e.objectId}）`;
+    return (
+      `（上下文：你正在 Anytype 页面 ${label} 的「讨论区」，这条消息是针对该页面的评论。` +
+      `需要了解页面内容时，用 anytype_read_object 读取对象 ${e.objectId}。）`
+    );
+  }
+
   const onEvent = (e: NormalizedEvent): void => {
-    void router.handle(e);
+    void (async () => {
+      if (e.objectId) e.contextNote = await discussionContext(e);
+      await router.handle(e);
+    })().catch((err) => console.warn(`handle failed: ${String(err)}`));
   };
 
   // Captured ONCE before any subscription: the stream replays recent history as

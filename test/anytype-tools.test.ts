@@ -145,6 +145,20 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("500");
   });
 
+  it("describes non-text blocks instead of calling the page empty", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        properties: { name: "日常试卷1" },
+        blocks: [{ type: "image" }, { type: "image" }, { type: "image" }, { type: "image" }],
+      })),
+    });
+    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
+    const text = res.content[0].text;
+    expect(text).toContain("日常试卷1");
+    expect(text).toContain("4× image");
+  });
+
   it("tolerates malformed objects/blocks when reading", async () => {
     const api = fakeApi({
       getObjectRaw: vi.fn(async () => ({ blocks: [null, 42, { text: 7 }, { text: "ok" }] })),

@@ -14,6 +14,8 @@ export interface NormalizedEvent {
   isBotSelf: boolean;
   isDirect: boolean;
   objectId?: string;
+  /** Extra context prepended to the agent prompt (e.g. "you are in page X's discussion"). */
+  contextNote?: string;
 }
 
 export interface ChatRow {

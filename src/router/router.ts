@@ -13,7 +13,10 @@ export class Router {
   async handle(event: NormalizedEvent): Promise<void> {
     if (!shouldTrigger(event)) return;
     const target: ChatTarget = { spaceId: event.spaceId, chatId: event.chatId, objectId: event.objectId };
-    const prompt = stripBotMention(event.text, this.deps.botName) || event.text;
+    const stripped = stripBotMention(event.text, this.deps.botName) || event.text;
+    // A discussion's message carries context about the page it belongs to; the
+    // agent has no other way to know which page a comment is on.
+    const prompt = event.contextNote ? `${event.contextNote}\n\n${stripped}` : stripped;
     try {
       const reply = await this.deps.run(event.spaceId, event.chatId, prompt);
       if (reply.trim().length > 0) await this.deps.send(target, reply);

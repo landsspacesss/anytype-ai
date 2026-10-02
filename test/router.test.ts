@@ -26,6 +26,14 @@ describe("Router", () => {
     expect(send).toHaveBeenCalledWith({ spaceId: "s", chatId: "c", objectId: undefined }, "the answer");
   });
 
+  it("prepends contextNote to the prompt when present", async () => {
+    const run = vi.fn(async () => "ok");
+    const send = vi.fn(async () => {});
+    const r = new Router({ botName: "ai", run, send });
+    await r.handle(ev({ mentionsBot: true, text: "@ai 讲了什么", contextNote: "（你正在页面「X」的讨论区）" }));
+    expect(run).toHaveBeenCalledWith("s", "c", "（你正在页面「X」的讨论区）\n\n讲了什么");
+  });
+
   it("sends an error message when the agent fails", async () => {
     const run = vi.fn(async () => { throw new Error("boom"); });
     const send = vi.fn(async () => {});
