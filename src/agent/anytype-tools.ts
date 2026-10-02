@@ -167,6 +167,56 @@ function objectName(doc: unknown): string {
   return typeof s === "string" ? s : "";
 }
 
+/** Common content types → the file extension we save a downloaded file as. */
+const MIME_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+  "image/tiff": "tiff",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/xml": "xml",
+  "application/json": "json",
+  "application/xml": "xml",
+  "application/zip": "zip",
+  "application/msword": "doc",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+};
+
+/** Pick a file extension from a content type (parameters like charset stripped). */
+function extForMime(mimeType: string): string {
+  const m = mimeType.split(";")[0].trim().toLowerCase();
+  if (MIME_EXT[m]) return MIME_EXT[m];
+  if (m.startsWith("image/")) return m.slice("image/".length).replace(/[^a-z0-9]/g, "") || "img";
+  if (m.startsWith("text/")) return m.slice("text/".length).replace(/[^a-z0-9]/g, "") || "txt";
+  return "bin";
+}
+
+/**
+ * Turn an object name into a safe single path component: strip path separators
+ * and control characters, collapse whitespace, drop leading dots, cap the
+ * length. Falls back to "file" when nothing usable remains.
+ */
+function sanitizeName(name: string): string {
+  const cleaned = name
+    .replace(/[\/\\]/g, "_")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "");
+  return cleaned.slice(0, 80).trim() || "file";
+}
+
 /** Image blocks in a document: their file object id + mime type. */
 function extractImages(doc: unknown): Array<{ objectId: string; mimeType: string }> {
   if (doc === null || typeof doc !== "object") return [];
@@ -215,7 +265,12 @@ const GUIDELINES = [
   "When the user asks to be notified/watched when a note or object changes (e.g. \"订阅\", \"watch\", \"notify me when it changes\"), use `anytype_watch` with action \"add\" and the object id. The bot then polls the object and posts a notification into this chat whenever its content changes.",
   "当用户想定时检查（如'每天/每小时/每天早上9点'）时，用 `anytype_watch` 的 `cron` 参数设置 5 段 cron（分 时 日 月 周）；例如 每天早上9点=`0 9 * * *`，每小时=`0 * * * *`，每30分钟=`*/30 * * * *`。",
   "`anytype_watch` 的 `prompt` 参数可让 AI 在对象每次变化时执行一条指令（例如『总结这篇文章的变化』『检查未完成待办并提醒我』）：届时 AI 会先读取该对象、再按指令处理，并把结果发到聊天。用户想要摘要/检查/动作而非原始 diff 时，就设置 `prompt`。",
+  "The space may contain loose files (PDF, docx, xlsx, txt, …) not inside any page — find them with `anytype_list_objects {type:\"file\"}` (or the relevant type). To READ one: `anytype_download_file {id}` saves it locally, then use your shell tools to extract text (pdftotext / unzip / python3 / cat). Images you can already SEE via anytype_read_object.",
 ];
+
+/** Extra guideline for the anytype_download_file tool (the rest are the shared identity ones). */
+const DOWNLOAD_FILE_GUIDELINE =
+  "For a loose non-image file (PDF/docx/xlsx/txt/…), call `anytype_download_file` to save it locally, then read it with your shell tools (pdftotext, unzip -p, python3, cat).";
 
 /** Extra guideline for the web_search tool (the rest are the shared identity ones). */
 const WEB_SEARCH_GUIDELINE =
@@ -449,6 +504,51 @@ export function createAnytypeTools(deps: {
         return textResult(`Downloaded ${images.length} image(s):\n${out.join("\n")}`);
       } catch (err) {
         return textResult(`anytype_download_images failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const downloadFile = defineTool({
+    name: "anytype_download_file",
+    label: "Download a file object",
+    description:
+      "Download ANY file object (a loose PDF, docx, xlsx, txt, …) into the local workspace and return its path. " +
+      "Use this to read non-image files: after downloading, extract the text with your shell tools. " +
+      "For images, prefer anytype_read_object — you can already SEE those.",
+    promptSnippet: "anytype_download_file — save any file object locally, then extract text with your shell tools",
+    promptGuidelines: [...GUIDELINES, DOWNLOAD_FILE_GUIDELINE],
+    parameters: Type.Object({
+      id: Type.String({ description: "The file object id to download." }),
+      name: Type.Optional(
+        Type.String({ description: "Fallback name to use if the object itself has no name." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        // Learn the display name from the object doc; fall back to params.name/id.
+        let name = params.name?.trim() ?? "";
+        try {
+          const doc = await api.getObjectRaw(spaceId, params.id);
+          const docName = objectName(doc);
+          if (docName) name = docName;
+        } catch {
+          // A file object's doc may be unreadable — the download can still work.
+        }
+        const { data, mimeType } = await api.downloadFileContent(spaceId, params.id);
+        const ext = extForMime(mimeType);
+        const file = `${sanitizeName(name || params.id)}-${params.id.slice(0, 8)}.${ext}`;
+        const dir = path.join(workspaceDir, "files");
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, file);
+        fs.writeFileSync(dest, data);
+        return textResult(
+          `Saved to ${dest}  (${mimeType}, ${data.length} bytes)\n` +
+            "Read it with your shell tools: `cat`/`head` for text, `file` to detect, `pdftotext` for PDFs, " +
+            "`unzip -p` (or python3 zipfile+xml) for docx/xlsx, `strings`/`xxd` for unknown binaries. " +
+            "Images: prefer anytype_read_object (you get to SEE them).",
+        );
+      } catch (err) {
+        return textResult(`anytype_download_file failed: ${errMessage(err)}`);
       }
     },
   });
@@ -1221,6 +1321,7 @@ export function createAnytypeTools(deps: {
     search,
     readObject,
     downloadImages,
+    downloadFile,
     cropImage,
     createNote,
     updateObject,

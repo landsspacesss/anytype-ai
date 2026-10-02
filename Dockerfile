@@ -28,8 +28,12 @@ RUN npm ci && npm run build
 # ---------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runtime
 
+# Extraction tooling so the agent can read ANY loose file it downloads:
+#   poppler-utils -> pdftotext (PDFs); unzip -> docx/xlsx (zip of XML);
+#   file -> sniff; python3 -> stdlib zipfile/xml fallback. No pip needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates bash git \
+      poppler-utils unzip file python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # The model provider key is supplied at runtime via `env_file: .env` and is

@@ -115,14 +115,15 @@ function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: st
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the twenty-six tools with expected names", () => {
+  it("returns the twenty-seven tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(26);
+    expect(tools).toHaveLength(27);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
       "anytype_read_object",
       "anytype_download_images",
+      "anytype_download_file",
       "crop_image",
       "anytype_create_note",
       "anytype_update_object",
@@ -318,6 +319,84 @@ describe("createAnytypeTools", () => {
     const m = text.match(/(\S+\.png)/);
     expect(m).toBeTruthy();
     if (m) expect(fs.existsSync(m[1])).toBe(true);
+  });
+
+  it("anytype_download_file saves a loose file with a mime-derived extension and reports path/mime/size", async () => {
+    const pdf = Buffer.from("%PDF-1.4\n% minimal pdf bytes\n");
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({ type: "file", properties: { name: "季度报告" } })),
+      downloadFileContent: vi.fn(async () => ({ data: pdf, mimeType: "application/pdf" })),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_download_file"), { id: "file-abc12345" });
+    expect(api.getObjectRaw).toHaveBeenCalledWith(SPACE, "file-abc12345");
+    expect(api.downloadFileContent).toHaveBeenCalledWith(SPACE, "file-abc12345");
+    const text = res.content[0].text as string;
+    expect(text).toContain("Saved to");
+    expect(text).toContain("application/pdf");
+    expect(text).toContain(`${pdf.length} bytes`);
+    const m = text.match(/(\S+\.pdf)/);
+    expect(m).toBeTruthy();
+    if (m) {
+      expect(m[1]).toContain("/files/");
+      expect(m[1]).toContain("file-abc"); // id prefix
+      expect(fs.existsSync(m[1])).toBe(true);
+      expect(fs.readFileSync(m[1]).equals(pdf)).toBe(true);
+    }
+  });
+
+  it("anytype_download_file falls back to params.name for the filename and maps docx", async () => {
+    const docx = Buffer.from("PK fake docx");
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({ type: "file", properties: {} })),
+      downloadFileContent: vi.fn(async () => ({
+        data: docx,
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_download_file"), {
+      id: "file-9",
+      name: "报告草稿",
+    });
+    const text = res.content[0].text as string;
+    expect(text).toContain(".docx");
+    const m = text.match(/(\S+\.docx)/);
+    expect(m).toBeTruthy();
+    if (m) {
+      expect(m[1]).toContain("报告草稿");
+      expect(fs.existsSync(m[1])).toBe(true);
+    }
+  });
+
+  it("anytype_download_file sanitizes separators and defaults unknown types to .bin", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({ properties: { name: "../../etc/passwd" } })),
+      downloadFileContent: vi.fn(async () => ({ data: Buffer.from([0, 1, 2]), mimeType: "application/octet-stream" })),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_download_file"), { id: "file-zzzzzzzz" });
+    const text = res.content[0].text as string;
+    expect(text).toMatch(/\.bin/);
+    const m = text.match(/(\S+\.bin)/);
+    expect(m).toBeTruthy();
+    if (m) {
+      expect(fs.existsSync(m[1])).toBe(true);
+      // The saved file is a single component inside files/ (no traversal out).
+      const rel = m[1].split("/files/")[1] ?? "";
+      expect(rel).not.toContain("/");
+      expect(rel.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("anytype_download_file surfaces failures as text instead of throwing", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({ properties: { name: "x" } })),
+      downloadFileContent: vi.fn(async () => {
+        throw new Error("downloadFileContent failed: 404");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_download_file"), { id: "gone" });
+    expect(res.content[0].text).toContain("anytype_download_file failed");
+    expect(res.content[0].text).toContain("404");
   });
 
   it("crop_image returns image content for a region and refuses paths outside the workspace", async () => {
