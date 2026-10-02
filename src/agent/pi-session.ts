@@ -325,6 +325,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     if (!opts.agentWorkspaceRoot) throw new Error("runInSpace: agentWorkspaceRoot not set");
     const target = (space ?? "").trim();
     if (target.length === 0) throw new Error("runInSpace: `space` is required");
+    // Deliberately NOT `resolveSpaceId`: that resolver FALLS BACK to the parent
+    // space on an unknown name, which would make a writable worker silently
+    // write to the console's own space. Here an unknown target must ERROR.
     const spaces = await opts.api.listSpaces();
     const spaceId =
       spaces.some((s) => s.id === target) ? target :

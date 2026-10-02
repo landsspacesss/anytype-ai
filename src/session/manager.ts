@@ -177,13 +177,14 @@ export class SessionManager {
     return this.consoleLocks.get(chatId) ?? this.entries.get(chatId)?.client.isConsoleUnlocked?.() ?? false;
   }
 
-  /** Set the console lock; applies to a live client. No-op (false) for non-consoles. */
+  /** Set the console lock; applies to a live client (no-op for non-console clients). */
   setConsoleUnlocked(chatId: string, on: boolean): boolean {
     const e = this.entries.get(chatId);
     if (e) {
-      // A live client: ask it. If it isn't a console it has no business here.
+      // A live console client returns the resulting lock state; a client with
+      // no such method (a normal session) returns undefined → leave it alone.
       const applied = e.client.setConsoleUnlocked?.(on);
-      if (applied === undefined) return this.getConsoleUnlocked(chatId); // no such method → not a console client
+      if (applied === undefined) return this.getConsoleUnlocked(chatId);
     }
     this.consoleLocks.set(chatId, on);
     return on;
