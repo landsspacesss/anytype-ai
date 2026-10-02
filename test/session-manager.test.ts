@@ -263,4 +263,20 @@ describe("SessionManager", () => {
     expect(mgr.approvePending("c1", "all")).toBe(true);
     expect(approve).toHaveBeenCalledWith("all");
   });
+
+  it("remembers the console lock per chat and applies it to a live client", async () => {
+    const setLock = vi.fn((on: boolean) => on);
+    const createClient = vi.fn(async () => ({
+      get busy() { return false; },
+      async prompt() { return "ok"; },
+      async close() {}, async abort() {},
+      setConsoleUnlocked: setLock, isConsoleUnlocked: () => false,
+    }));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    expect(mgr.getConsoleUnlocked("c1")).toBe(false); // default locked
+    await mgr.ensure("c1");
+    expect(mgr.setConsoleUnlocked("c1", true)).toBe(true);
+    expect(setLock).toHaveBeenLastCalledWith(true);
+    expect(mgr.getConsoleUnlocked("c1")).toBe(true);
+  });
 });

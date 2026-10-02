@@ -113,6 +113,8 @@ export class SessionManager {
   private policies = new Map<string, InterruptPolicy>();
   // Per-chat approval mode, remembered across client rebuilds.
   private approvalModes = new Map<string, ApprovalMode>();
+  // Per-chat console lock, remembered across client rebuilds.
+  private consoleLocks = new Map<string, boolean>();
 
   constructor(private opts: SessionManagerOptions) {
     this.now = opts.now ?? Date.now;
@@ -170,6 +172,21 @@ export class SessionManager {
     return e.client.setApprovalMode?.(mode) ?? mode;
   }
 
+  /** Whether this chat's console is unlocked (false when it isn't a console). */
+  getConsoleUnlocked(chatId: string): boolean {
+    return this.consoleLocks.get(chatId) ?? this.entries.get(chatId)?.client.isConsoleUnlocked?.() ?? false;
+  }
+
+  /** Set the console lock; applies to a live client. No-op (false) for non-consoles. */
+  setConsoleUnlocked(chatId: string, on: boolean): boolean {
+    const e = this.entries.get(chatId);
+    if (e && e.client.setConsoleUnlocked && !e.client.setConsoleUnlocked(on)) {
+      return this.getConsoleUnlocked(chatId); // client refused (not a console)
+    }
+    this.consoleLocks.set(chatId, on);
+    return on;
+  }
+
   /** Resolve a pending approval from a command. Returns true if one was pending. */
   approvePending(chatId: string, kind: "approve" | "all" | "deny"): boolean {
     return this.entries.get(chatId)?.client.approvePending?.(kind) ?? false;
@@ -215,6 +232,7 @@ export class SessionManager {
     this.freshChats.delete(chatId);
     client.setInterruptPolicy?.(this.getInterruptPolicy(chatId));
     client.setApprovalMode?.(this.getApprovalMode(chatId));
+    client.setConsoleUnlocked?.(this.getConsoleUnlocked(chatId));
     const existing = this.entries.get(chatId);
     if (existing) {
       // Lost a race: another caller created the entry while we awaited.
