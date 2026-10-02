@@ -95,6 +95,14 @@ describe("CONSOLE_TOOLS", () => {
       expect(CONSOLE_TOOLS).not.toContain(w);
     }
   });
+
+  it("includes every console-only tool that createAnytypeTools registers under the console dep", () => {
+    // These are the tools registered ONLY when the `console` dep is present;
+    // if one is missing here, applyTools() silently strips it in a console session.
+    for (const t of ["anytype_list_spaces", "anytype_memories", "anytype_join_space"]) {
+      expect(CONSOLE_TOOLS).toContain(t);
+    }
+  });
 });
 
 describe("effectiveToolNames", () => {

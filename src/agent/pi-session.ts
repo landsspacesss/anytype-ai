@@ -106,6 +106,7 @@ export const CONSOLE_TOOLS: readonly string[] = [
   "anytype_download_images",
   "anytype_download_file",
   "anytype_memories",
+  "anytype_join_space",
   "crop_image",
   "anytype_list_properties",
   "anytype_list_types",

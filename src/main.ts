@@ -63,7 +63,7 @@ async function main(): Promise<void> {
             ok: true,
             message:
               `已接入控制台（空间 ${r.spaceId}）。` +
-              `重启后生效：docker compose -f docker-compose.yml -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml up -d --force-recreate --no-deps ai-bot`,
+              `重启 bot 容器后生效（用你的合并 compose：docker compose -f docker-compose.yml -f <bot>/docker-compose.bot.yml up -d --force-recreate --no-deps ai-bot）。`,
           };
     }
     return { ok: true, message: "已加入空间（邀请链接）。bot 会自动发现并订阅它。" };
