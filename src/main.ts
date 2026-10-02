@@ -255,6 +255,8 @@ async function main(): Promise<void> {
             setApprovalMode: (mode) => sessions.setApprovalMode(e.chatId, mode),
             approvePending: (kind) => sessions.approvePending(e.chatId, kind),
             isConsole: isConsoleSpace(e.spaceId),
+            getConsoleUnlocked: () => sessions.getConsoleUnlocked(e.chatId),
+            setConsoleUnlocked: (on) => sessions.setConsoleUnlocked(e.chatId, on),
           };
           const reply = await handleCommand(parsed.command, parsed.args, ctx);
           if (reply && reply.trim().length > 0) {

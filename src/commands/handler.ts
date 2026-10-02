@@ -28,6 +28,10 @@ export interface CommandContext {
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
   /** True when this chat is the global console space (always read-only). */
   isConsole: boolean;
+  /** Console only: whether the console is unlocked (may dispatch workers). */
+  getConsoleUnlocked(): boolean;
+  /** Console only: set the console lock; returns the applied value. */
+  setConsoleUnlocked(on: boolean): boolean;
   /** Current approval mode for this chat. */
   getApprovalMode(): ApprovalMode;
   /** Set the approval mode; returns the applied mode. */
@@ -56,7 +60,7 @@ export const HELP_TEXT = [
   "/compact — 压缩/精简当前对话",
   "/model [名称] — 查看或切换本对话的模型",
   "/effort [档位] — 查看或设置思考级别（档位取决于模型，通常 off|high|max）",
-  "/yolo [auto|ask|readonly] — 审批模式：auto=不问，ask=写操作需批准（/yolo off），readonly=不能写（/yolo readonly）",
+  "/yolo [auto|ask|readonly] — 审批模式：auto=不问，ask=写操作需批准（/yolo off），readonly=不能写（/yolo readonly）（控制台：auto=解锁派 worker，readonly=锁定）",
   "/approve [all] — 批准待批准的操作（all=本回合剩余全放行）",
   "/deny — 拒绝待批准的操作",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
@@ -129,7 +133,23 @@ export async function handleCommand(
     }
 
     case "yolo": {
-      if (ctx.isConsole) return "控制台始终只读（/yolo 在此无效）";
+      // The console has no approval mode — its own tools are always read-only.
+      // /yolo here just LOCKS/UNLOCKS the ability to dispatch workers.
+      if (ctx.isConsole) {
+        if (!args) {
+          return `控制台：${ctx.getConsoleUnlocked() ? "已解锁（可派 worker 到其它空间）" : "锁定（只读，不能派 worker）"}`;
+        }
+        const a = args.toLowerCase();
+        if (a === "auto" || a === "on") {
+          ctx.setConsoleUnlocked(true);
+          return "控制台已解锁：可派 worker 到其它空间（写入由该 worker 执行）。";
+        }
+        if (a === "readonly" || a === "ro" || a === "ask" || a === "off") {
+          ctx.setConsoleUnlocked(false);
+          return "控制台已锁定：只读，不能派 worker。";
+        }
+        return `用法：/yolo auto|readonly（控制台：auto=解锁，readonly=锁定）`;
+      }
       if (!args) {
         return `审批模式：${approvalLabel(ctx.getApprovalMode())}`;
       }

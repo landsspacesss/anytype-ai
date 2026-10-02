@@ -38,6 +38,9 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
   const setApprovalMode = vi.fn((m: ApprovalMode) => { mode = m; return m; });
   const approvePending = vi.fn(() => true);
   const getApprovalMode = () => mode;
+  let unlocked = false;
+  const getConsoleUnlocked = () => unlocked;
+  const setConsoleUnlocked = vi.fn((on: boolean) => { unlocked = on; return on; });
   const context: CommandContext = {
     chatId: "c1",
     getClient: () => client,
@@ -51,6 +54,8 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     setApprovalMode,
     approvePending,
     isConsole: false,
+    getConsoleUnlocked,
+    setConsoleUnlocked,
   };
   return {
     context,
@@ -62,6 +67,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     approvePending,
     getPolicy: () => current,
     getApprovalMode,
+    setConsoleUnlocked,
   };
 }
 
@@ -189,6 +195,25 @@ describe("handleCommand", () => {
     const reply = await handleCommand("yolo", "ask", { ...context, isConsole: true });
     expect(setApprovalMode).not.toHaveBeenCalled();
     expect(reply).toMatch(/控制台/);
+  });
+
+  it("/yolo auto on the console unlocks it (may dispatch workers)", async () => {
+    const { context, setConsoleUnlocked } = ctx(fakeClient());
+    const reply = await handleCommand("yolo", "auto", { ...context, isConsole: true });
+    expect(setConsoleUnlocked).toHaveBeenCalledWith(true);
+    expect(reply).toMatch(/解锁/);
+  });
+  it("/yolo readonly on the console locks it", async () => {
+    const { context, setConsoleUnlocked } = ctx(fakeClient());
+    const reply = await handleCommand("yolo", "readonly", { ...context, isConsole: true });
+    expect(setConsoleUnlocked).toHaveBeenCalledWith(false);
+    expect(reply).toMatch(/锁定/);
+  });
+  it("/yolo (no arg) on the console reports lock state and does not change it", async () => {
+    const { context, setConsoleUnlocked } = ctx(fakeClient());
+    const reply = await handleCommand("yolo", "", { ...context, isConsole: true });
+    expect(setConsoleUnlocked).not.toHaveBeenCalled();
+    expect(reply).toMatch(/锁定|解锁/);
   });
 
   it("/approve delegates to approvePending('approve')", async () => {
