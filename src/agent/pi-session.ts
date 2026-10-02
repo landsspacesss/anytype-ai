@@ -80,6 +80,32 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   if (opts.modelId && !model) {
     console.warn(`pi model "${opts.modelId}" not found in registry; using pi default`);
   }
+  // Spawn a fresh, isolated session for one self-contained task and return its
+  // final text. The child gets the same Anytype tools but NO subagent tool, so
+  // it cannot recurse.
+  const runSubagent = async (task: string): Promise<string> => {
+    const { session: child } = await createAgentSession({
+      cwd: opts.cwd,
+      agentDir: opts.agentDir,
+      authStorage,
+      modelRegistry,
+      sessionManager: SessionManager.inMemory(),
+      customTools: createAnytypeTools({
+        api: opts.api, spaceId: opts.spaceId, workspaceDir: opts.cwd, store: opts.store,
+        chatId: opts.chatId, defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
+        searchApiKey: opts.searchApiKey ?? "", searchModel: opts.searchModel,
+        // NOTE: no runSubagent → the child cannot spawn further sub-agents.
+      }),
+      ...(model ? { model: model as never } : {}),
+    });
+    let text = "";
+    const unsub = child.subscribe((e) => {
+      if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") text += e.assistantMessageEvent.delta;
+    });
+    try { await child.prompt(task); } finally { unsub(); child.dispose(); }
+    return text;
+  };
+
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     agentDir: opts.agentDir,
@@ -95,6 +121,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
       searchApiKey: opts.searchApiKey ?? "",
       searchModel: opts.searchModel,
+      runSubagent,
     }),
     ...(model ? { model: model as never } : {}),
   });

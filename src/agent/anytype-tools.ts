@@ -302,6 +302,12 @@ export function createAnytypeTools(deps: {
   searchMaxUses?: number;
   /** Search implementation (defaults to the real DeepSeek web search; injectable for tests). */
   searchFn?: typeof webSearch;
+  /**
+   * When set, adds a `subagent` tool that delegates a self-contained task to a
+   * fresh, isolated session and returns its final text. Absent for child
+   * sessions, so they cannot spawn further sub-agents.
+   */
+  runSubagent?: (task: string) => Promise<string>;
 }): ToolDefinition[] {
   const {
     api,
@@ -315,6 +321,7 @@ export function createAnytypeTools(deps: {
     searchModel,
     searchMaxUses,
     searchFn = webSearch,
+    runSubagent,
   } = deps;
 
   /** Message shown when a cron expression fails validation. */
@@ -1316,7 +1323,7 @@ export function createAnytypeTools(deps: {
     },
   });
 
-  return [
+  const tools = [
     listObjects,
     search,
     readObject,
@@ -1345,4 +1352,40 @@ export function createAnytypeTools(deps: {
     insertMarkdown,
     webSearchTool,
   ] as ToolDefinition[];
+
+  // Only the parent agent gets the subagent tool; child sessions omit it, so
+  // they cannot spawn further sub-agents (no recursion).
+  if (runSubagent) {
+    tools.push(
+      defineTool({
+        name: "subagent",
+        label: "Delegate to a sub-agent",
+        description:
+          "Spawn a fresh, isolated sub-agent with the SAME Anytype tools to run an independent sub-task, and return its final answer. " +
+          "Use it to keep this conversation's context focused: for example summarize several pages, or search + read many objects, " +
+          "and get back just the result instead of every intermediate step. " +
+          "The sub-agent does NOT see this conversation, so `task` must be a complete, self-contained instruction. " +
+          "It cannot spawn further sub-agents. Each call is a full extra model run and costs tokens, so reserve it for genuinely " +
+          "independent, parallelizable work rather than trivial steps.",
+        promptSnippet: "subagent — delegate an independent sub-task to a fresh sub-agent",
+        promptGuidelines: GUIDELINES,
+        parameters: Type.Object({
+          task: Type.String({
+            description:
+              "A complete, self-contained instruction for the sub-agent (it does NOT see this conversation).",
+          }),
+        }),
+        async execute(_toolCallId, params) {
+          try {
+            const r = await runSubagent(params.task);
+            return textResult(r.trim() ? r.trim() : "(sub-agent returned no text)");
+          } catch (err) {
+            return textResult("subagent failed: " + errMessage(err));
+          }
+        },
+      }),
+    );
+  }
+
+  return tools;
 }

@@ -114,10 +114,28 @@ function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: st
   });
 }
 
+/** Like mkTools, but with a runSubagent hook so the `subagent` tool is added. */
+function mkToolsWithSubagent(
+  api: AnytypeClient,
+  runSubagent: (task: string) => Promise<string> = async () => "sub-result",
+) {
+  return createAnytypeTools({
+    api,
+    spaceId: SPACE,
+    workspaceDir: tmpWorkspace(),
+    store: fakeStore(),
+    chatId: CHAT,
+    defaultWatchCron: DEFAULT_CRON,
+    searchApiKey: "",
+    runSubagent,
+  });
+}
+
 describe("createAnytypeTools", () => {
-  it("returns the twenty-seven tools with expected names", () => {
+  it("returns the twenty-seven tools (no subagent) with expected names", () => {
     const tools = mkTools(fakeApi());
     expect(tools).toHaveLength(27);
+    expect(tools.map((t) => t.name)).not.toContain("subagent");
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -147,6 +165,39 @@ describe("createAnytypeTools", () => {
       "anytype_insert_markdown",
       "web_search",
     ]);
+  });
+
+  it("adds a twenty-eighth `subagent` tool when runSubagent is provided", () => {
+    const tools = mkToolsWithSubagent(fakeApi());
+    expect(tools).toHaveLength(28);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("subagent");
+    // The subagent tool is appended after the base 27.
+    expect(names[names.length - 1]).toBe("subagent");
+  });
+
+  it("subagent calls runSubagent with the task and returns its trimmed text", async () => {
+    const runSubagent = vi.fn(async (_task: string) => "  子代理的答案  ");
+    const tools = mkToolsWithSubagent(fakeApi(), runSubagent);
+    const res = await run(toolByName(tools, "subagent"), { task: "统计 image 数量" });
+    expect(runSubagent).toHaveBeenCalledWith("统计 image 数量");
+    expect(res.content[0].text).toBe("子代理的答案");
+    expect(res.details).toEqual({});
+  });
+
+  it("subagent yields a placeholder when the sub-agent returns no text", async () => {
+    const tools = mkToolsWithSubagent(fakeApi(), async () => "   ");
+    const res = await run(toolByName(tools, "subagent"), { task: "t" });
+    expect(res.content[0].text).toBe("(sub-agent returned no text)");
+  });
+
+  it("subagent surfaces a failing runSubagent as text instead of throwing", async () => {
+    const tools = mkToolsWithSubagent(fakeApi(), async () => {
+      throw new Error("boom 500");
+    });
+    const res = await run(toolByName(tools, "subagent"), { task: "t" });
+    expect(res.content[0].text).toContain("subagent failed");
+    expect(res.content[0].text).toContain("boom 500");
   });
 
   it("every tool carries a description, promptSnippet, and identity guidelines", () => {
