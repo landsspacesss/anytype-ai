@@ -196,7 +196,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `/compact` | 压缩当前对话（省上下文） |
 | `/model [名]` | 查看 / 切换本聊天的模型（如 `deepseek-v4-pro`） |
 | `/effort [low\|medium\|high\|max]` | 查看 / 设置思考等级 |
-| `/yolo [auto\|ask\|readonly]` | **审批模式**（默认 `auto`）：`auto`=全部工具、从不过问；`ask`=写/危险操作需你批准（见第 7 节）；`readonly`=不能写。别名 `on`→auto、`off`→ask、`ro`→readonly。无参数=查看当前模式 |
+| `/yolo [auto\|ask\|readonly]` | **审批模式**（默认 `auto`）：`auto`=全部工具、从不过问；`ask`=写/危险操作需你批准（见第 7 节）；`readonly`=不能写。别名 `on`→auto、`off`→ask、`ro`→readonly。无参数=查看当前模式。**在控制台里语义不同**：`auto`=**解锁**（可派 worker 到其它空间）、`readonly`（或 `ask`/`off`）=**锁定**、无参数=报告锁定状态；控制台**自身始终只读**（见第 8 节「控制台派 worker」）|
 | `/approve [all]` | **批准**待批准的操作：`/approve` 只放行这一个，`/approve all` 放行本次及**本回合**后续全部（见第 7 节）|
 | `/deny` | **拒绝**待批准的操作（见第 7 节）|
 | `/interrupt [now\|step]` | **打断策略**：`now`=新消息一到就打断当前回合；`step`=**等当前这一步**（思考/读）结束再打断——**写操作进行中则等它写完**（默认）。设置**立即生效**，会作用于进行中的回合 |
@@ -239,7 +239,7 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 `APPROVAL_MODE` 环境变量设置**新会话**（非控制台）的默认模式；`APPROVAL_TIMEOUT_MS` 设置 `ask` 模式下等待批准的超时（毫秒，超时即拒绝）。
 
-**控制台不受影响**：它**始终只读**，`/yolo` 在控制台里无效（回「控制台始终只读」）。
+**控制台不受影响（但有例外）**：控制台**自身始终只读**，可它在控制台里的 `/yolo` **不是**审批模式开关，而是**控制台锁**：`/yolo auto` **解锁**（可派 worker 到其它空间）、`/yolo readonly`（或 `ask`/`off`）**锁定**、`/yolo` 无参数报告当前锁定/解锁。默认**锁定**。详见第 8 节「控制台派 worker（跨空间委派）」。
 
 ---
 
@@ -279,6 +279,32 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 
 **工作区**：控制台会话的工作区固定为 `/workspace/_global`（它的记忆即**全局记忆**）；普通空间仍各自用 `/workspace/<spaceId>/`。
 
+### 控制台派 worker（跨空间委派）
+
+控制台**自身写不了任何东西**，但它可以把**写任务委派给别的空间**，由那边的 worker 去写——控制台自己始终保持只读。
+
+**控制台锁**：控制台**默认锁定**（只读、不能派 worker），用 `/yolo` 开锁/上锁（**按聊天**记录，重启不丢）：
+
+| 命令 | 作用 |
+|---|---|
+| `/yolo auto` | **解锁**——控制台获得 `anytype_run_in_space` 工具，可派 worker |
+| `/yolo readonly`（或 `ask`/`off`） | **锁定** |
+| `/yolo`（无参数） | 报告当前是「已解锁」还是「锁定」 |
+
+> ⚠️ 控制台里的 `/yolo` **不是**审批模式开关（那只是普通空间的），它只控制这把**控制台锁**。
+
+**解锁后**，控制台会多出一个工具 **`anytype_run_in_space(space, task)`**：把一个**一次性 worker** 派到**目标空间**（`space` 给空间 **id 或名称**）。
+
+- worker 在**那个空间自己的工作区/记忆**里跑（该空间的 `AGENTS.md` / `MEMORY.md`），**既能读、也能写那个空间**，任务结束即**销毁**（每次都是全新的）。
+- `task` 必须**自包含**——worker **看不到**控制台的对话，要把它需要的信息全写进去。
+- **控制台自身永不写**：任何模式下控制台**自己的工具始终只读**；真正写入的只有 worker，且**只写它被指定的那一个空间**。
+- worker **不能再派 worker**（没有子代理工具，无法递归）；`space` **写错/不存在会直接报错**（**绝不**回退到别的空间）。
+- **普通（非控制台）空间完全不受影响。**
+
+**用法示例**：在控制台里先 `/yolo auto`，然后对它说：
+
+> 去 <空间名> 新建/整理一篇 …（把要做的事说清楚）
+
 ### gRPC 桥（`src/anytype/grpc.ts`）
 
 控制台接入 / 加入空间走一个**小本地 gRPC 桥**，直连 anytype-heart 的 `127.0.0.1:31010`（**明文 h2c**）。每次调用都**重新**从 CLI 配置（`~/.anytype/config.json` → `sessionToken`）读 `token` metadata——所以 anytype-cli 重启换了新 token 也能跟上。
@@ -307,6 +333,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | 内存 | 正常空闲 ~70–100MB；上限 2G。看 `docker stats anytype-ai-bot-1`。 |
 | 容器停了 | `docker ps -a` 看退出码；`restart: unless-stopped` 一般会自动拉起。 |
 | 控制台 / `/join` 加入失败 | ① 确认 bot 容器**只读挂载**了 anytype-cli 配置目录（桥靠它读 `sessionToken`，见第 8 节）；② **别调 `WorkspaceGetAll` 之类桩方法**——会打死 anytype-cli，需重建 bot（`… up -d --force-recreate --no-deps ai-bot`）；③ 对**已存在**的 1:1 重跑 `/join` 可能超时——**无害**，控制台已可用。 |
+| 控制台说做不到派 worker | 它处于**锁定**态。先在控制台里发 `/yolo auto` **解锁**（见第 8 节「控制台派 worker」）。`/yolo readonly`（或 `ask`/`off`）会重新锁定。 |
 
 ---
 

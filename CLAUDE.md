@@ -74,11 +74,23 @@ Key facts that span multiple files:
 - **The console (global assistant) is one designated space that gets global powers.**
   `main.ts` picks it from `CONSOLE_SPACE_ID` (env, wins) or `<workspaceRoot>/console.json`
   (`{spaceId, chatId?, bootstrappedAt}`). A console session gets `CONSOLE_TOOLS` — an
-  **unconditionally read-only** set (no writers; `/yolo` cannot widen it) plus
+  **unconditionally read-only** set (no writers — its own set stays read-only in
+  every mode) plus
   `anytype_list_spaces` / `anytype_memories` and a `space` (id or name) param on the
   read tools (`anytype_list_objects` / `anytype_search` / `anytype_read_object`) so it
   can read from **any** joined space. Its workspace is `/workspace/_global` (its memory
   is the global one); **normal sessions are unchanged** and cannot see other spaces.
+- **The console lock gates cross-space delegation.** `consoleUnlocked` is **per-chat**
+  and **default locked**; it is toggled only by `/yolo` on the console (`auto`→unlock,
+  `readonly`/`ask`/`off`→lock, no arg reports it) and is **not** the approval-mode
+  switch. Unlocked, the console's ACTIVE tool set gains `anytype_run_in_space(space,
+  task)`, which dispatches a **parameterized one-shot worker** —
+  `createChildAgent({ spaceId, cwd, readOnly: false })` bound to the TARGET space's
+  workspace (`/workspace/<spaceId>`, its own `AGENTS.md`/`MEMORY.md`) and discarded
+  after the task. The worker gets the same tools **minus** `subagent`/`agent`, so it
+  **cannot recurse**; an unknown/typo'd target space **throws** (no fallback to another
+  space). The console's **own** tools stay read-only in every mode — only the worker
+  writes, and only to its one target.
 - **The console can be connected from a link** via `/join <link>` (a bridge slash
   command, handled without the agent) or the `anytype_join_space` tool (registered
   **only** in console sessions, and only on an explicit user ask). An invite link
@@ -121,8 +133,10 @@ Key facts that span multiple files:
   through a caller-supplied `DefaultResourceLoader` that **MUST be `await reload()`ed**
   (`buildSessionResourceLoader`) — the SDK uses a caller-supplied loader **as-is** and
   never auto-reloads it, so a missing reload silently drops the gate. `readonly` drops
-  every write tool, and its child sessions are set to `SAFE_TOOLS`-only. The console is
-  always `CONSOLE_TOOLS`/read-only and `/yolo` is inert there. **Behavior change:**
+  every write tool, and its child sessions are set to `SAFE_TOOLS`-only. The console's
+  **own** tools are always `CONSOLE_TOOLS`/read-only; `/yolo` on the console is **not**
+  the approval switch but toggles the console lock (see the console-lock bullet above).
+  **Behavior change:**
   `/yolo off` now means `ask` (it used to mean "read-only"); read-only is `/yolo
   readonly`.
 
