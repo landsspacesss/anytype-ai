@@ -198,6 +198,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `/effort [low\|medium\|high\|max]` | 查看 / 设置思考等级 |
 | `/yolo [on\|off]` | **自动模式**（默认开）：开=全部工具；关=**只读**（禁增删改） |
 | `/interrupt [now\|step]` | **打断策略**：`now`=新消息一到就打断当前回合；`step`=**等当前这一步**（思考/读）结束再打断——**写操作进行中则等它写完**（默认）。设置**立即生效**，会作用于进行中的回合 |
+| `/join <链接>` | **加入空间**（邀请链接）或**接入控制台**（你的 1:1 链接）——不经 agent，直接处理（见第 7 节）|
 | `/help` | 列出指令 |
 
 > 指令只在**会触发**的消息里生效（即私聊，或被 @ 的群聊消息）。执行指令**不经过** agent，直接回结果。
@@ -228,7 +229,20 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 | 环境变量 | `.env` 里设 `CONSOLE_SPACE_ID=<space-id>`（**优先级更高**，覆盖文件）|
 | 记录文件 | 写 `/workspace/console.json`：`{"spaceId": "<space-id>", "chatId": "…", "bootstrappedAt": "<ISO 时间>"}`（`chatId` 可省，discovery 会自行解析）|
 
-> 阶段 1 **没有自动建立控制台**的流程——需手动指定上面任一项。阶段 2 计划引入**链接式建立**（接受加入链接）来简化这一步，目前**尚未实现**。
+### 接入控制台（推荐：把 1:1 链接发给 bot）
+
+**把「你自己的 1:1 链接」发给 bot**（或直接发 `/join <你的 1:1 链接>`），bot 就会**镜像你的 1:1 空间**并把它记为控制台。链接从哪来：Anytype 客户端 → **账户头像 → 1:1 图标 → Copy Link**（形如 `https://hi.any.coop/<identity>#<key>`，或 `anytype://hi/?id=…&key=…`）。
+
+bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的** 1:1 链接。于是有两种模式：
+
+| 模式 | 做法 | 说明 |
+|---|---|---|
+| **A** | 你打开 **bot 自己**的链接 | 自建网络上**未必走得通**：对端身份要经 heart 的 inbox 送达 bot，在这里**不可靠**（日志 `wait profile: got nil profile` / `acl-notifications … apply on empty tree disallowed`）|
+| **B（推荐，可靠）** | 你把**自己**的 1:1 链接发给 bot（或 `/join <链接>`） | bot 镜像它 → 控制台接入成功 |
+
+- **1:1 链接** → 镜像该 1:1 空间（`WorkspaceCreate`）并记到 `/workspace/console.json`；**需重启 bot 容器**才生效（`… up -d --force-recreate --no-deps ai-bot`）。
+- **邀请链接**（`anytype://invite/?cid=..&key=..` 或 `https://<host>/<cid>#<key>`）→ bot 加入该共享空间（`SpaceJoin`），随后自动发现 + 订阅，**无需重启**。
+- 模型也可调用 **`anytype_join_space`** 工具做同样的事，但**仅控制台会话**内可用，且**只有用户明确要求**时才该调。
 
 **在控制台会话里，助手可以：**
 
@@ -239,6 +253,16 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 **控制台会话无条件只读**：它的工具集里**没有任何写工具**（建/改/删/编辑/发送/上传/订阅/属性/类型/集合/模板……），所以模型**物理上写不了**——这是**靠不注册这些工具**实现的，**不是靠提示词**。`/yolo` 在控制台里**无效**（会回「控制台始终只读（/yolo 在此无效）」）。
 
 **工作区**：控制台会话的工作区固定为 `/workspace/_global`（它的记忆即**全局记忆**）；普通空间仍各自用 `/workspace/<spaceId>/`。
+
+### gRPC 桥（`src/anytype/grpc.ts`）
+
+控制台接入 / 加入空间走一个**小本地 gRPC 桥**，直连 anytype-heart 的 `127.0.0.1:31010`（**明文 h2c**）。每次调用都**重新**从 CLI 配置（`~/.anytype/config.json` → `sessionToken`）读 `token` metadata——所以 anytype-cli 重启换了新 token 也能跟上。
+
+- **只暴露三个方法**：`AppGetVersion`（安全的健康探测）、`WorkspaceCreate`（镜像 1:1）、`SpaceJoin`（加入共享空间）。
+- **⚠️ 部署要求**：bot 容器必须**只读挂载** anytype-cli 的配置目录，桥才能读到 token。已在 `docker-compose.bot.yml`：`${ANYTYPE_CLI_CONFIG_DIR:-/home/landspace/anytype/storage/anytype-cli}:/root/.anytype:ro`。
+- **⚠️ 绝不要调用其他 RPC**：有些 anytype-heart 方法是**已移除的桩**，会 `panic("should be removed")`、**打死 anytype-cli 进程**——之后 bot 的 `service:anytype-cli` netns 变陈旧（日志全是 `fetch failed`），必须 `docker compose … up -d --force-recreate --no-deps ai-bot` 才能恢复。（早前探测 `WorkspaceGetAll` 就是这样。）
+
+**⚠️ 已知限制**：对一个**已存在**的 1:1 空间调用 `WorkspaceCreate` 会**挂到客户端 ~15 秒超时**——因为 heart 尝试重发 inbox 邀请、而在自建网络上取不到对端 profile（`inboxsender: … wait profile: got nil profile`）。**全新**的 1:1 则几秒返回。实际影响：用链接 `/join` 一个**新的** 1:1 没问题；对**已接入**的控制台重跑可能返回超时（**无害**——控制台本来就能用）。
 
 ---
 
@@ -256,6 +280,7 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 | 回复很慢（分钟级） | 那是旧 omp 架构。当前是内嵌 pi SDK，正常 **几秒**。 |
 | 内存 | 正常空闲 ~70–100MB；上限 2G。看 `docker stats anytype-ai-bot-1`。 |
 | 容器停了 | `docker ps -a` 看退出码；`restart: unless-stopped` 一般会自动拉起。 |
+| 控制台 / `/join` 加入失败 | ① 确认 bot 容器**只读挂载**了 anytype-cli 配置目录（桥靠它读 `sessionToken`，见第 7 节）；② **别调 `WorkspaceGetAll` 之类桩方法**——会打死 anytype-cli，需重建 bot（`… up -d --force-recreate --no-deps ai-bot`）；③ 对**已存在**的 1:1 重跑 `/join` 可能超时——**无害**，控制台已可用。 |
 
 ---
 

@@ -79,6 +79,20 @@ Key facts that span multiple files:
   read tools (`anytype_list_objects` / `anytype_search` / `anytype_read_object`) so it
   can read from **any** joined space. Its workspace is `/workspace/_global` (its memory
   is the global one); **normal sessions are unchanged** and cannot see other spaces.
+- **The console can be connected from a link** via `/join <link>` (a bridge slash
+  command, handled without the agent) or the `anytype_join_space` tool (registered
+  **only** in console sessions, and only on an explicit user ask). An invite link
+  joins that shared space (`SpaceJoin`); a 1:1 link (`hi.any.coop/<identity>#<key>`)
+  mirrors the user's one-to-one space (`WorkspaceCreate`) and records it in
+  `<workspaceRoot>/console.json` — the container must be restarted for it to take
+  effect. At boot with no console configured, `main.ts` prints the bot's own 1:1 link.
+- **`src/anytype/grpc.ts` is a minimal bridge to anytype-heart** (plaintext h2c, a
+  `token` metadata header read fresh from the mounted anytype-cli config →
+  `~/.anytype/config.json`). It exposes **only** `AppGetVersion` / `WorkspaceCreate`
+  / `SpaceJoin`. **Never call other RPCs** — some are removed stubs that
+  `panic("should be removed")` and kill anytype-cli (the bot's `service:anytype-cli`
+  netns then goes stale and needs a `--force-recreate --no-deps` bot recreate). The
+  CLI config dir must be mounted read-only; see `docker-compose.bot.yml`.
 - **The model is registered manually.** `docker/models.json` adds DeepSeek V4.1
   (`deepseek-flash`, multimodal) because pi's built-in table predates it; pi's agent
   dir is a volume mount, so `ensureModelsConfig` copies it in at startup.
