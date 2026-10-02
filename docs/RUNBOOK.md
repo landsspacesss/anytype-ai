@@ -167,6 +167,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
 | `web_search` | **联网搜索**当前信息（走 DeepSeek 托管的 Anthropic `web_search`，**同一个 key**；返回答案+来源链接）|
 | `subagent` | **派子代理**：把独立子任务交给一个全新隔离会话跑（带同样工具、**不能再派子代理**），返回结果。适合「分别总结多篇 / 批量搜读」——保持主上下文干净。每次是一次完整模型调用（费 token）|
+| `web_fetch` | **抓网页内容**：用内置的 **Lightpanda 无头浏览器**（官方 glibc 版）取具体 URL，默认转 **Markdown**（也可 html/semantic）。适合读 `web_search` 找到的那个页面。⚠️ bot 容器在受限网络，Google/维基等**连不上**，国内站/bing/github 可以。|
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
 
 > **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
