@@ -35,6 +35,8 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     return p;
   });
   const joinSpace = vi.fn(async () => ({ ok: true, message: "ok" }));
+  const runWorkflow = vi.fn(async () => ({ ok: true, message: "started r1" }));
+  const listRuns = vi.fn(() => [{ id: "r1", name: "demo", status: "done", when: "t" }]);
   let mode: ApprovalMode = "auto";
   const setApprovalMode = vi.fn((m: ApprovalMode) => { mode = m; return m; });
   const approvePending = vi.fn(() => true);
@@ -51,6 +53,8 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     getInterruptPolicy: () => current,
     setInterruptPolicy,
     joinSpace,
+    runWorkflow,
+    listRuns,
     getApprovalMode,
     setApprovalMode,
     approvePending,
@@ -64,6 +68,8 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     reset,
     setInterruptPolicy,
     joinSpace,
+    runWorkflow,
+    listRuns,
     setApprovalMode,
     approvePending,
     getPolicy: () => current,
@@ -318,5 +324,26 @@ describe("handleCommand", () => {
     const { context } = ctx(fakeClient());
     const reply = await handleCommand("join", "", { ...context, joinSpace: vi.fn() });
     expect(reply).toMatch(/用法/);
+  });
+
+  it("/run <name> delegates to ctx.runWorkflow", async () => {
+    const { context, runWorkflow } = ctx(fakeClient());
+    const reply = await handleCommand("run", "demo", context);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "", false);
+    expect(reply).toContain("started");
+  });
+  it("/run <name> --resume <id> sets resume", async () => {
+    const { context, runWorkflow } = ctx(fakeClient());
+    await handleCommand("run", "demo --resume r9", context);
+    expect(runWorkflow).toHaveBeenCalledWith("demo", "", true);
+  });
+  it("/run with no arg shows usage", async () => {
+    const { context } = ctx(fakeClient());
+    expect(await handleCommand("run", "", context)).toMatch(/用法/);
+  });
+  it("/runs lists recent runs", async () => {
+    const { context } = ctx(fakeClient());
+    const reply = await handleCommand("runs", "", context);
+    expect(reply).toContain("demo");
   });
 });

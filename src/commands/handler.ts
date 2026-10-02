@@ -26,6 +26,10 @@ export interface CommandContext {
    * human-readable result message.
    */
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
+  /** Run (or resume) a workflow. `args` are `k=v` pairs; `resume` continues a run. */
+  runWorkflow(name: string, args: string, resume: boolean): Promise<{ ok: boolean; message: string }>;
+  /** Recent workflow runs (newest first). */
+  listRuns(): { id: string; name: string; status: string; when: string }[];
   /** True when this chat is the global console space (always read-only). */
   isConsole: boolean;
   /** Console only: whether the console is unlocked (may dispatch workers). */
@@ -85,6 +89,8 @@ export const HELP_TEXT = [
   "/deny — 拒绝待批准的操作",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
   "/join <链接> — 加入一个空间（邀请链接）或接入 1:1 控制台（1:1 链接）",
+  "/run <工作流> [k=v …] — 运行一个工作流（--resume <id> 从断点续跑）",
+  "/runs — 列出最近的工作流运行",
   "/help — 显示本帮助",
 ].join("\n");
 
@@ -216,6 +222,21 @@ export async function handleCommand(
       if (!args) return "用法：/join <链接>（邀请链接，或 1:1 链接以接入控制台）";
       const r = await ctx.joinSpace(args);
       return r.message;
+    }
+
+    case "run": {
+      if (!args) return "用法：/run <工作流名> [k=v …]（/run <名> --resume <runId> 续跑；/runs 看历史）";
+      const resumeMatch = args.match(/\s--resume\s+(\S+)/);
+      const resume = resumeMatch !== null;
+      const name = args.split(/\s+/)[0];
+      const rest = args.replace(/^\S+\s*/, "").replace(/--resume\s+\S+/, "").trim();
+      const r = await ctx.runWorkflow(name, rest, resume);
+      return r.message;
+    }
+    case "runs": {
+      const rows = ctx.listRuns();
+      if (rows.length === 0) return "还没有工作流运行记录。";
+      return rows.map((r) => `${r.status === "done" ? "✅" : r.status === "failed" ? "❌" : "▶"} ${r.id} ${r.name} (${r.status}) ${r.when}`).join("\n");
     }
 
     case "help":
