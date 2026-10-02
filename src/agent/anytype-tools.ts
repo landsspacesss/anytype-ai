@@ -857,10 +857,121 @@ export function createAnytypeTools(deps: {
       try {
         const types = await api.listTypes(spaceId);
         if (types.length === 0) return textResult("The space defines no types.");
-        const lines = types.map((t) => `${t.name || "(unnamed)"} — ${t.key}`);
+        const lines = types.map(
+          (t) => `${t.name || "(unnamed)"}${t.layout ? ` (${t.layout})` : ""} — ${t.key}`,
+        );
         return textResult(`${types.length} type(s) in the space:\n${lines.join("\n")}`);
       } catch (err) {
         return textResult(`anytype_list_types failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const createType = defineTool({
+    name: "anytype_create_type",
+    label: "Create Anytype type",
+    description:
+      "Create a new object type in the current space. `name` is the singular display name. " +
+      "`layout` is one of: basic, note, todo, profile, bookmark, set, collection. " +
+      "`properties` is the type's whole field list — property names (an unknown name is created). " +
+      "Returns the new type's key (use it with anytype_create_note's `type`).",
+    promptSnippet: "anytype_create_type — create an object type (name, layout, icon, properties)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      name: Type.String({ description: "The type's singular display name." }),
+      plural_name: Type.Optional(Type.String({ description: "Optional plural display name." })),
+      layout: Type.Optional(
+        Type.String({
+          description: "One of: basic, note, todo, profile, bookmark, set, collection (default basic).",
+        }),
+      ),
+      icon_emoji: Type.Optional(Type.String({ description: "Optional emoji icon, e.g. \"🌟\"." })),
+      properties: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "The type's field list: property names (unknown names are minted).",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const { key } = await api.createType(spaceId, {
+          name: params.name,
+          pluralName: params.plural_name,
+          layout: params.layout,
+          iconEmoji: params.icon_emoji,
+          properties: params.properties,
+        });
+        return textResult(`已创建类型「${params.name}」(key: ${key})`);
+      } catch (err) {
+        return textResult(`anytype_create_type failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const updateType = defineTool({
+    name: "anytype_update_type",
+    label: "Update Anytype type",
+    description:
+      "Update an existing object type by its `key` (from anytype_list_types). Provide at least one field to change: " +
+      "`name` (rename), `plural_name`, `layout` (basic|note|todo|profile|bookmark|set|collection), " +
+      "`icon_emoji`, or `default_view` (table|list|gallery|kanban|calendar|graph).",
+    promptSnippet: "anytype_update_type — rename/relayout an object type by key",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      key: Type.String({ description: "The type key to update (from anytype_list_types)." }),
+      name: Type.Optional(Type.String({ description: "New singular display name." })),
+      plural_name: Type.Optional(Type.String({ description: "New plural display name." })),
+      layout: Type.Optional(
+        Type.String({ description: "New layout: basic|note|todo|profile|bookmark|set|collection." }),
+      ),
+      icon_emoji: Type.Optional(Type.String({ description: "New emoji icon, e.g. \"🌟\"." })),
+      default_view: Type.Optional(
+        Type.String({ description: "New default view: table|list|gallery|kanban|calendar|graph." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const hasField =
+          params.name !== undefined ||
+          params.plural_name !== undefined ||
+          params.layout !== undefined ||
+          params.icon_emoji !== undefined ||
+          params.default_view !== undefined;
+        if (!hasField) {
+          return textResult(
+            "anytype_update_type: provide at least one of name, plural_name, layout, icon_emoji, default_view.",
+          );
+        }
+        await api.updateType(spaceId, params.key, {
+          name: params.name,
+          pluralName: params.plural_name,
+          layout: params.layout,
+          iconEmoji: params.icon_emoji,
+          defaultView: params.default_view,
+        });
+        return textResult(`已更新类型 ${params.key}。`);
+      } catch (err) {
+        return textResult(`anytype_update_type failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const deleteType = defineTool({
+    name: "anytype_delete_type",
+    label: "Delete Anytype type",
+    description:
+      "Delete an object type by its `key` (from anytype_list_types). This is permanent — confirm the key first.",
+    promptSnippet: "anytype_delete_type — permanently delete an object type by key",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      key: Type.String({ description: "The type key to delete." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        await api.deleteType(spaceId, params.key);
+        return textResult(`已删除类型 ${params.key}。`);
+      } catch (err) {
+        return textResult(`anytype_delete_type failed: ${errMessage(err)}`);
       }
     },
   });
@@ -1425,6 +1536,9 @@ export function createAnytypeTools(deps: {
     listProperties,
     createProperty,
     listTypes,
+    createType,
+    updateType,
+    deleteType,
     createCollection,
     collectionItems,
     uploadFile,

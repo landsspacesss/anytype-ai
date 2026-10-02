@@ -50,6 +50,9 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
       { key: "page", name: "Page" },
       { key: "note", name: "Note" },
     ]),
+    createType: vi.fn(async () => ({ key: "plant" })),
+    updateType: vi.fn(async () => {}),
+    deleteType: vi.fn(async () => {}),
     createCollection: vi.fn(async () => ({ id: "coll-1" })),
     uploadFile: vi.fn(async () => ({ id: "file-1" })),
     sendMessage: vi.fn(async () => {}),
@@ -166,9 +169,9 @@ function mkToolsWithAgent(api: AnytypeClient, registry: SubagentRegistry) {
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the twenty-eight tools (no subagent) with expected names", () => {
+  it("returns the thirty-one tools (no subagent) with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(31);
     expect(tools.map((t) => t.name)).not.toContain("subagent");
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
@@ -187,6 +190,9 @@ describe("createAnytypeTools", () => {
       "anytype_list_properties",
       "anytype_create_property",
       "anytype_list_types",
+      "anytype_create_type",
+      "anytype_update_type",
+      "anytype_delete_type",
       "anytype_create_collection",
       "anytype_collection_items",
       "anytype_upload_file",
@@ -202,12 +208,12 @@ describe("createAnytypeTools", () => {
     ]);
   });
 
-  it("adds a twenty-ninth `subagent` tool when runSubagent is provided", () => {
+  it("adds a thirty-second `subagent` tool when runSubagent is provided", () => {
     const tools = mkToolsWithSubagent(fakeApi());
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(32);
     const names = tools.map((t) => t.name);
     expect(names).toContain("subagent");
-    // The subagent tool is appended after the base 28.
+    // The subagent tool is appended after the base 31.
     expect(names[names.length - 1]).toBe("subagent");
   });
 
@@ -235,21 +241,21 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("boom 500");
   });
 
-  it("adds a thirtieth `agent` tool when BOTH runSubagent and agentRegistry are provided", () => {
+  it("adds a thirty-third `agent` tool when BOTH runSubagent and agentRegistry are provided", () => {
     const tools = createAnytypeTools({
       ...baseDeps(fakeApi()),
       runSubagent: async () => "x",
       agentRegistry: fakeRegistry().registry,
     });
-    expect(tools).toHaveLength(30);
+    expect(tools).toHaveLength(33);
     const names = tools.map((t) => t.name);
     expect(names).toContain("agent");
     expect(names[names.length - 1]).toBe("agent");
   });
 
-  it("omits the `agent` tool (count 29) when agentRegistry is absent", () => {
+  it("omits the `agent` tool (count 32) when agentRegistry is absent", () => {
     const tools = mkToolsWithSubagent(fakeApi());
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(32);
     expect(tools.map((t) => t.name)).not.toContain("agent");
   });
 
@@ -782,6 +788,117 @@ describe("createAnytypeTools", () => {
     const text = res.content[0].text;
     expect(text).toContain("Page — page");
     expect(text).toContain("Note — note");
+  });
+
+  it("anytype_list_types shows layout when present", async () => {
+    const api = fakeApi({
+      listTypes: vi.fn(async () => [
+        { key: "task", name: "Task", layout: "todo" },
+        { key: "page", name: "Page" },
+      ]),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_list_types"), {});
+    const text = res.content[0].text;
+    expect(text).toContain("Task (todo) — task");
+    expect(text).toContain("Page — page"); // no layout -> no suffix
+  });
+
+  it("anytype_create_type maps params and returns the new key", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_create_type"), {
+      name: "Plant",
+      plural_name: "Plants",
+      layout: "basic",
+      icon_emoji: "🌱",
+      properties: ["Location", "Watered"],
+    });
+    expect(api.createType).toHaveBeenCalledWith(SPACE, {
+      name: "Plant",
+      pluralName: "Plants",
+      layout: "basic",
+      iconEmoji: "🌱",
+      properties: ["Location", "Watered"],
+    });
+    expect(res.content[0].text).toContain("已创建类型「Plant」");
+    expect(res.content[0].text).toContain("plant");
+  });
+
+  it("anytype_create_type works with only a name", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_create_type"), { name: "Solo" });
+    expect(api.createType).toHaveBeenCalledWith(SPACE, {
+      name: "Solo",
+      pluralName: undefined,
+      layout: undefined,
+      iconEmoji: undefined,
+      properties: undefined,
+    });
+  });
+
+  it("anytype_create_type surfaces a failure as text", async () => {
+    const api = fakeApi({
+      createType: vi.fn(async () => {
+        throw new Error("createType failed: 400");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_create_type"), { name: "X" });
+    expect(res.content[0].text).toContain("anytype_create_type failed");
+    expect(res.content[0].text).toContain("400");
+  });
+
+  it("anytype_update_type maps params and calls updateType", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_update_type"), {
+      key: "plant",
+      name: "Flower",
+      default_view: "gallery",
+    });
+    expect(api.updateType).toHaveBeenCalledWith(SPACE, "plant", {
+      name: "Flower",
+      pluralName: undefined,
+      layout: undefined,
+      iconEmoji: undefined,
+      defaultView: "gallery",
+    });
+    expect(res.content[0].text).toContain("已更新类型 plant");
+  });
+
+  it("anytype_update_type requires at least one field to change", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_update_type"), { key: "plant" });
+    expect(api.updateType).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/at least one/);
+  });
+
+  it("anytype_update_type surfaces a failure as text", async () => {
+    const api = fakeApi({
+      updateType: vi.fn(async () => {
+        throw new Error("updateType failed: 404");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_update_type"), { key: "gone", name: "x" });
+    expect(res.content[0].text).toContain("anytype_update_type failed");
+    expect(res.content[0].text).toContain("404");
+  });
+
+  it("anytype_delete_type calls deleteType(spaceId, key)", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_delete_type"), { key: "plant" });
+    expect(api.deleteType).toHaveBeenCalledWith(SPACE, "plant");
+    expect(res.content[0].text).toContain("已删除类型 plant");
+  });
+
+  it("anytype_delete_type surfaces a failure as text", async () => {
+    const api = fakeApi({
+      deleteType: vi.fn(async () => {
+        throw new Error("deleteType failed: 403");
+      }),
+    });
+    const res = await run(toolByName(mkTools(api), "anytype_delete_type"), { key: "plant" });
+    expect(res.content[0].text).toContain("anytype_delete_type failed");
+    expect(res.content[0].text).toContain("403");
   });
 
   it("anytype_create_collection passes name/items and returns the id", async () => {

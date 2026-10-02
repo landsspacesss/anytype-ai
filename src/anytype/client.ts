@@ -292,12 +292,94 @@ export class AnytypeClient {
   }
 
   /** List the space's object types (page, note, task, …). */
-  async listTypes(spaceId: string): Promise<Array<{ key: string; name: string }>> {
+  async listTypes(
+    spaceId: string,
+  ): Promise<Array<{ key: string; name: string; layout?: string }>> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/types?limit=200`;
     const res = await this.fetchFn(url, { headers: this.headers() });
     if (!res.ok) throw new AnytypeApiError(res.status, "listTypes");
-    const body = (await res.json()) as { data?: Array<{ key?: string; name?: string }> };
-    return (body.data ?? []).map((t) => ({ key: t.key ?? "", name: t.name ?? "" }));
+    const body = (await res.json()) as {
+      data?: Array<{ key?: string; name?: string; layout?: string }>;
+    };
+    return (body.data ?? []).map((t) => {
+      const item: { key: string; name: string; layout?: string } = {
+        key: t.key ?? "",
+        name: t.name ?? "",
+      };
+      if (t.layout) item.layout = t.layout;
+      return item;
+    });
+  }
+
+  /**
+   * Create an object type. `properties` is the type's whole field list (property
+   * names; an unknown name mints a property). Returns the new type's key (the
+   * API response's `body.key`).
+   */
+  async createType(
+    spaceId: string,
+    opts: {
+      name: string;
+      pluralName?: string;
+      apiKey?: string;
+      layout?: string;
+      iconEmoji?: string;
+      properties?: string[];
+      defaultView?: string;
+    },
+  ): Promise<{ key: string }> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/types`;
+    const body: Record<string, unknown> = { name: opts.name };
+    if (opts.pluralName !== undefined) body.plural_name = opts.pluralName;
+    if (opts.apiKey !== undefined) body.api_key = opts.apiKey;
+    if (opts.layout !== undefined) body.layout = opts.layout;
+    if (opts.iconEmoji !== undefined) body.icon = { format: "emoji", emoji: opts.iconEmoji };
+    if (opts.properties !== undefined) {
+      body.property_definitions = opts.properties.map((name) => ({ name }));
+    }
+    if (opts.defaultView !== undefined) body.default_view = opts.defaultView;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "createType");
+    const parsed = (await res.json()) as { key?: string };
+    return { key: parsed.key ?? "" };
+  }
+
+  /** Update an object type: PATCH types/{key} with only the provided fields. */
+  async updateType(
+    spaceId: string,
+    key: string,
+    opts: {
+      name?: string;
+      pluralName?: string;
+      layout?: string;
+      iconEmoji?: string;
+      defaultView?: string;
+    },
+  ): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/types/${key}`;
+    const body: Record<string, unknown> = {};
+    if (opts.name !== undefined) body.name = opts.name;
+    if (opts.pluralName !== undefined) body.plural_name = opts.pluralName;
+    if (opts.layout !== undefined) body.layout = opts.layout;
+    if (opts.iconEmoji !== undefined) body.icon = { format: "emoji", emoji: opts.iconEmoji };
+    if (opts.defaultView !== undefined) body.default_view = opts.defaultView;
+    const res = await this.fetchFn(url, {
+      method: "PATCH",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "updateType");
+  }
+
+  /** Delete an object type: DELETE types/{key}. */
+  async deleteType(spaceId: string, key: string): Promise<void> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/types/${key}`;
+    const res = await this.fetchFn(url, { method: "DELETE", headers: this.headers() });
+    if (!res.ok) throw new AnytypeApiError(res.status, "deleteType");
   }
 
   /**

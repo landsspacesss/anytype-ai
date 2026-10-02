@@ -128,6 +128,101 @@ describe("AnytypeClient object edits", () => {
     expect(types).toEqual([{ key: "page", name: "Page" }]);
   });
 
+  it("listTypes includes layout when the API returns one", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: [{ key: "task", name: "Task", layout: "todo" }, { key: "page", name: "Page" }] }),
+          { status: 200 },
+        ),
+    );
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const types = await c.listTypes("s1");
+    expect(types).toEqual([
+      { key: "task", name: "Task", layout: "todo" },
+      { key: "page", name: "Page" },
+    ]);
+  });
+
+  it("createType POSTs the type body (mapping properties + emoji icon) and returns the key", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: "plant", id: "t1" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const res = await c.createType("s1", {
+      name: "Plant",
+      pluralName: "Plants",
+      layout: "basic",
+      iconEmoji: "🌱",
+      properties: ["Location", "Watered"],
+      defaultView: "table",
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/types");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      name: "Plant",
+      plural_name: "Plants",
+      layout: "basic",
+      icon: { format: "emoji", emoji: "🌱" },
+      property_definitions: [{ name: "Location" }, { name: "Watered" }],
+      default_view: "table",
+    });
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer k");
+    expect(res).toEqual({ key: "plant" });
+  });
+
+  it("createType sends only name when nothing optional is given", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: "x" }), { status: 201 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.createType("s1", { name: "Solo" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Solo" });
+  });
+
+  it("createType throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 400 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.createType("s1", { name: "X" })).rejects.toThrow(/400/);
+  });
+
+  it("updateType PATCHes types/{key} with only the provided fields", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: "plant" }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.updateType("s1", "plant", { name: "Flower", defaultView: "gallery" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/types/plant");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ name: "Flower", default_view: "gallery" });
+  });
+
+  it("updateType maps iconEmoji and omits undefined fields", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.updateType("s1", "plant", { iconEmoji: "🌿" });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ icon: { format: "emoji", emoji: "🌿" } });
+  });
+
+  it("updateType throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 404 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.updateType("s1", "gone", { name: "x" })).rejects.toThrow(/404/);
+  });
+
+  it("deleteType DELETEs types/{key}", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: "plant" }), { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.deleteType("s1", "plant");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/types/plant");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("deleteType throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 403 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.deleteType("s1", "plant")).rejects.toThrow(/403/);
+  });
+
   it("createCollection POSTs and returns the id", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "coll-1" }), { status: 201 }));
     const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
