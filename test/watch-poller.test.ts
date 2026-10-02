@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { WatchStore, type WatchRecord } from "../src/watch/store.js";
 import { pollWatch, pollWatches, summarizeChange } from "../src/watch/poller.js";
-import type { AnytypeClient } from "../src/anytype/client.js";
+import { AnytypeApiError, type AnytypeClient } from "../src/anytype/client.js";
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "watch-poll-")), "watches.json");
@@ -99,21 +99,58 @@ describe("pollWatches", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("notifies and unsubscribes when the object fetch fails", async () => {
+  it("does NOT unsubscribe on a transient (non-404) fetch failure", async () => {
     const store = seededStore([{ id: "b1", text: "hello" }]);
     const api = {
       getObjectRaw: vi.fn(async () => {
-        throw new Error("getObjectRaw failed: 404");
+        throw new Error("fetch failed: ECONNRESET");
       }),
     } as unknown as AnytypeClient;
     const notify = vi.fn(async () => {});
 
     await pollWatches({ store, api, notify });
 
+    expect(notify).not.toHaveBeenCalled();
+    expect(store.get("sp1", "obj1")).toBeDefined(); // kept
+  });
+
+  it("keeps the watch until maxMisses consecutive 404s, then unsubscribes", async () => {
+    const store = seededStore([{ id: "b1", text: "hello" }]);
+    const api = {
+      getObjectRaw: vi.fn(async () => {
+        throw new AnytypeApiError(404, "getObjectRaw");
+      }),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
+    await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
+    expect(store.get("sp1", "obj1")).toBeDefined(); // 2 misses — not yet
+    expect(notify).not.toHaveBeenCalled();
+
+    await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
+    expect(store.get("sp1", "obj1")).toBeUndefined(); // 3rd miss — dropped
     expect(notify).toHaveBeenCalledTimes(1);
     expect((notify.mock.calls[0] as unknown as [WatchRecord, string])[1]).toContain("已不存在");
-    expect(store.get("sp1", "obj1")).toBeUndefined();
-    expect(store.all()).toHaveLength(0);
+  });
+
+  it("resets the miss counter when the object is readable again", async () => {
+    const store = seededStore([{ id: "b1", text: "hello" }]);
+    let fail = true;
+    const api = {
+      getObjectRaw: vi.fn(async () => {
+        if (fail) throw new AnytypeApiError(404, "getObjectRaw");
+        return docWith({ b1: "hello" }); // unchanged content
+      }),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
+    expect(store.get("sp1", "obj1")?.misses).toBe(1);
+    fail = false;
+    await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
+    expect(store.get("sp1", "obj1")?.misses).toBe(0);
+    expect(store.get("sp1", "obj1")).toBeDefined();
   });
 
   it("isolates a failing record so other watches still poll", async () => {
@@ -123,7 +160,7 @@ describe("pollWatches", () => {
     store.upsert({ objectId: "good", spaceId: "sp1", chatId: "c", label: "Good", snapshot: [], cron: "* * * * *" });
     const api = {
       getObjectRaw: vi.fn(async (_space: string, id: string) => {
-        if (id === "bad") throw new Error("boom");
+        if (id === "bad") throw new Error("boom"); // transient
         return docWith({ b1: "x" });
       }),
     } as unknown as AnytypeClient;
@@ -131,9 +168,9 @@ describe("pollWatches", () => {
 
     await pollWatches({ store, api, notify });
 
-    // bad -> unsubscribed with a notice; good -> changed ([] -> [b1]) so notified.
-    expect(store.get("sp1", "bad")).toBeUndefined();
+    // bad -> transient, kept; good -> changed ([] -> [b1]) so notified.
+    expect(store.get("sp1", "bad")).toBeDefined();
     expect(store.get("sp1", "good")).toBeDefined();
-    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 });

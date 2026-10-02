@@ -24,6 +24,12 @@ export interface WatchRecord {
   snapshot: BlockSnap[];
   cron: string;
   lastFiredMinute?: string;
+  /**
+   * Consecutive "object not found (404)" observations. Only after this reaches
+   * the configured max do we treat the object as truly deleted and unsubscribe;
+   * transient network/5xx failures never increment it. Reset on any success.
+   */
+  misses?: number;
 }
 
 /**
@@ -124,6 +130,7 @@ export class WatchStore {
           cron,
         };
         if (typeof rec.lastFiredMinute === "string") record.lastFiredMinute = rec.lastFiredMinute;
+        if (typeof rec.misses === "number" && rec.misses > 0) record.misses = rec.misses;
         this.records.set(this.key(rec.spaceId, rec.objectId), record);
       }
     } catch {

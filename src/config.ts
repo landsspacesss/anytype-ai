@@ -40,5 +40,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     replyMaxLen: posInt(env, "REPLY_MAX_LEN", 4000),
     watchTickMs: posInt(env, "WATCH_TICK_MS", 60000),
     watchDefaultCron: env.WATCH_DEFAULT_CRON || "*/30 * * * *",
+    // Consecutive 404s before a watched object is treated as deleted (guards
+    // against dropping a watch on a transient read failure).
+    watchMaxMisses: posInt(env, "WATCH_MAX_MISSES", 3),
   };
 }

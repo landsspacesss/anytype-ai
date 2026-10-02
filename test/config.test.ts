@@ -18,6 +18,23 @@ describe("loadConfig", () => {
     expect(cfg.replyMaxLen).toBe(4000);
     expect(cfg.watchTickMs).toBe(60000);
     expect(cfg.watchDefaultCron).toBe("*/30 * * * *");
+    expect(cfg.watchMaxMisses).toBe(3);
+  });
+
+  it("reads WATCH_MAX_MISSES and falls back for a non-positive value", () => {
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      WATCH_MAX_MISSES: "5",
+    } as NodeJS.ProcessEnv);
+    expect(custom.watchMaxMisses).toBe(5);
+
+    const bad = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      WATCH_MAX_MISSES: "0",
+    } as NodeJS.ProcessEnv);
+    expect(bad.watchMaxMisses).toBe(3);
   });
 
   it("reads WATCH_TICK_MS and falls back for a non-positive value", () => {

@@ -48,4 +48,6 @@ export interface Config {
   watchTickMs: number;
   /** Default cron for watches that don't specify one (env WATCH_DEFAULT_CRON). */
   watchDefaultCron: string;
+  /** Consecutive 404s before a watch is dropped as deleted (env WATCH_MAX_MISSES). */
+  watchMaxMisses: number;
 }

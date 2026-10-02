@@ -1,6 +1,10 @@
 import type { AnytypeClient } from "../anytype/client.js";
+import { AnytypeApiError } from "../anytype/client.js";
 import type { BlockSnap, WatchRecord } from "./store.js";
 import { WatchStore, diffSnapshots, snapshotOf } from "./store.js";
+
+/** Default consecutive-404 threshold before a watch is dropped. */
+const DEFAULT_MAX_MISSES = 3;
 
 /** Collapse whitespace and truncate for a one-line preview. "" for empty text. */
 function preview(text: string): string {
@@ -48,6 +52,8 @@ export interface PollDeps {
   store: WatchStore;
   api: AnytypeClient;
   notify: (rec: WatchRecord, text: string) => Promise<void>;
+  /** Consecutive 404s before unsubscribing (guards against false drops). */
+  maxMisses?: number;
 }
 
 /**
@@ -63,16 +69,32 @@ export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void>
     let doc: unknown;
     try {
       doc = await deps.api.getObjectRaw(rec.spaceId, rec.objectId);
-    } catch {
-      // Object missing/deleted (or otherwise unreadable): notify + unsubscribe.
-      try {
-        await deps.notify(rec, `订阅的对象『${rec.label}』已不存在，已取消订阅`);
-      } catch {
-        // Notification failure must not stop the removal.
+    } catch (err) {
+      // Distinguish "really deleted" (404) from a transient blip (network/5xx).
+      // Only a 404 counts as a miss; and only after `maxMisses` consecutive
+      // misses do we unsubscribe — so a flaky read never drops a watch.
+      const notFound = err instanceof AnytypeApiError && err.status === 404;
+      if (!notFound) {
+        console.warn(`pollWatch: watch ${rec.objectId} transient error, keeping: ${String(err)}`);
+        return;
       }
-      deps.store.remove(rec.spaceId, rec.objectId);
+      rec.misses = (rec.misses ?? 0) + 1;
+      if (rec.misses >= (deps.maxMisses ?? DEFAULT_MAX_MISSES)) {
+        try {
+          await deps.notify(rec, `订阅的对象『${rec.label}』已不存在（连续 ${rec.misses} 次找不到），已取消订阅`);
+        } catch {
+          // Notification failure must not stop the removal.
+        }
+        deps.store.remove(rec.spaceId, rec.objectId);
+      }
       deps.store.save();
       return;
+    }
+
+    // Success: the object is alive — clear any accumulated misses.
+    if (rec.misses) {
+      rec.misses = 0;
+      deps.store.save();
     }
 
     const next = snapshotOf(doc);

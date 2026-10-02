@@ -238,6 +238,7 @@ async function main(): Promise<void> {
     void pollDueWatches({
       store: watchStore,
       api,
+      maxMisses: cfg.watchMaxMisses,
       notify: async (rec, text) => {
         console.log(`watch change: '${rec.label}' -> notifying chat ${rec.chatId}`);
         await api.sendMessage(rec.spaceId, rec.chatId, text, `watch-${rec.objectId}-${Date.now()}`);

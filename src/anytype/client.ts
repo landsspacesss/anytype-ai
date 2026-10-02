@@ -7,6 +7,17 @@ export interface AnytypeClientOptions {
   fetch?: typeof fetch;
 }
 
+/** An API error carrying the HTTP status, so callers can tell 404 from a blip. */
+export class AnytypeApiError extends Error {
+  constructor(
+    public readonly status: number,
+    method: string,
+  ) {
+    super(`${method} failed: ${status}`);
+    this.name = "AnytypeApiError";
+  }
+}
+
 export class AnytypeClient {
   private baseUrl: string;
   private apiKey: string;
@@ -29,13 +40,13 @@ export class AnytypeClient {
       headers: this.headers({ "Idempotency-Key": idempotencyKey }),
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) throw new Error(`sendMessage failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "sendMessage");
   }
 
   async listSpaces(): Promise<Array<{ id: string; name: string }>> {
     const url = `${this.baseUrl}/v2/spaces`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listSpaces failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listSpaces");
     const body = (await res.json()) as { data?: Array<{ id: string; name?: string }> };
     return (body.data ?? []).map((s) => ({ id: s.id, name: s.name ?? "" }));
   }
@@ -43,7 +54,7 @@ export class AnytypeClient {
   async listChats(spaceId: string): Promise<ChatRow[]> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats?limit=200`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listChats failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listChats");
     const body = (await res.json()) as { data?: ChatRow[] };
     return body.data ?? [];
   }
@@ -51,7 +62,7 @@ export class AnytypeClient {
   async listMembers(spaceId: string): Promise<Member[]> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/members`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listMembers failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listMembers");
     const body = (await res.json()) as { data?: Member[] };
     return body.data ?? [];
   }
@@ -59,14 +70,14 @@ export class AnytypeClient {
   async getObject(spaceId: string, objectId: string): Promise<{ name?: string }> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects/${objectId}`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`getObject failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "getObject");
     return (await res.json()) as { name?: string };
   }
 
   async listObjects(spaceId: string): Promise<Array<{ id: string; name: string; type: string }>> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects?limit=50`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listObjects failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listObjects");
     const body = (await res.json()) as { data?: Array<{ id?: string; name?: string; type?: string }> };
     return (body.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
   }
@@ -98,7 +109,7 @@ export class AnytypeClient {
       headers: this.headers(),
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`filteredSearch failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "filteredSearch");
     const parsed = (await res.json()) as { data?: Array<{ id?: string; name?: string; type?: string }> };
     return (parsed.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
   }
@@ -106,7 +117,7 @@ export class AnytypeClient {
   async getObjectRaw(spaceId: string, objectId: string): Promise<unknown> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects/${objectId}`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`getObjectRaw failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "getObjectRaw");
     return (await res.json()) as unknown;
   }
 
@@ -118,7 +129,7 @@ export class AnytypeClient {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/files/${fileId}/content`;
     // NOTE: no Content-Type — this is a binary GET, not JSON.
     const res = await this.fetchFn(url, { headers: { Authorization: `Bearer ${this.apiKey}` } });
-    if (!res.ok) throw new Error(`downloadFileContent failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "downloadFileContent");
     const mimeType = res.headers.get("content-type") ?? "application/octet-stream";
     const data = Buffer.from(await res.arrayBuffer());
     return { data, mimeType };
@@ -138,7 +149,7 @@ export class AnytypeClient {
         markdown: opts.markdown ?? "",
       }),
     });
-    if (!res.ok) throw new Error(`createObject failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "createObject");
     const body = (await res.json()) as { id?: string };
     return { id: body.id ?? "" };
   }
@@ -151,7 +162,7 @@ export class AnytypeClient {
       headers: this.headers(),
       body: JSON.stringify({ ops }),
     });
-    if (!res.ok) throw new Error(`patchObject failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "patchObject");
     return (await res.json()) as unknown;
   }
 
@@ -159,14 +170,14 @@ export class AnytypeClient {
   async deleteObject(spaceId: string, objectId: string): Promise<void> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/objects/${objectId}`;
     const res = await this.fetchFn(url, { method: "DELETE", headers: this.headers() });
-    if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "deleteObject");
   }
 
   /** List the space's properties (name/format and the key used to address them). */
   async listProperties(spaceId: string): Promise<Array<{ key: string; name: string; format: string }>> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/properties?limit=200`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listProperties failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listProperties");
     const body = (await res.json()) as {
       data?: Array<{ key?: string; name?: string; format?: string }>;
     };
@@ -190,7 +201,7 @@ export class AnytypeClient {
       headers: this.headers(),
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`createProperty failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "createProperty");
     const parsed = (await res.json()) as { key?: string };
     return { key: parsed.key ?? "" };
   }
@@ -199,7 +210,7 @@ export class AnytypeClient {
   async listTypes(spaceId: string): Promise<Array<{ key: string; name: string }>> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/types?limit=200`;
     const res = await this.fetchFn(url, { headers: this.headers() });
-    if (!res.ok) throw new Error(`listTypes failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "listTypes");
     const body = (await res.json()) as { data?: Array<{ key?: string; name?: string }> };
     return (body.data ?? []).map((t) => ({ key: t.key ?? "", name: t.name ?? "" }));
   }
@@ -217,7 +228,7 @@ export class AnytypeClient {
       headers: this.headers(),
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`createCollection failed: ${res.status}`);
+    if (!res.ok) throw new AnytypeApiError(res.status, "createCollection");
     const parsed = (await res.json()) as { id?: string };
     return { id: parsed.id ?? "" };
   }
@@ -238,7 +249,7 @@ export class AnytypeClient {
         headers: this.headers(),
         body: JSON.stringify({ url: opts.url, name: opts.name }),
       });
-      if (!res.ok) throw new Error(`uploadFile failed: ${res.status}`);
+      if (!res.ok) throw new AnytypeApiError(res.status, "uploadFile");
       const body = (await res.json()) as { id?: string };
       return { id: body.id ?? "" };
     }
@@ -254,7 +265,7 @@ export class AnytypeClient {
         headers: { Authorization: `Bearer ${this.apiKey}` },
         body: form,
       });
-      if (!res.ok) throw new Error(`uploadFile failed: ${res.status}`);
+      if (!res.ok) throw new AnytypeApiError(res.status, "uploadFile");
       const body = (await res.json()) as { id?: string };
       return { id: body.id ?? "" };
     }
