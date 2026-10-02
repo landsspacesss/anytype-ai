@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { loadConfig } from "./config.js";
@@ -9,6 +10,9 @@ import { createPiClient, ensureAgentFiles, ensureModelsConfig } from "./agent/pi
 import { SessionManager } from "./session/manager.js";
 import { sanitize } from "./util/sanitize.js";
 import { Router } from "./router/router.js";
+import { shouldTrigger, stripBotMention } from "./router/rules.js";
+import { parseCommand } from "./commands/parse.js";
+import { handleCommand } from "./commands/handler.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
@@ -45,9 +49,19 @@ async function main(): Promise<void> {
   const watchStore = new WatchStore(path.join(cfg.agentWorkspaceRoot, "watches.json"), cfg.watchDefaultCron);
   watchStore.load();
 
-  const sessions = new SessionManager({
+  // Each chat's persisted JSONL lives here; /new deletes it so history is gone.
+  const chatSessionDirFor = (chatId: string): string | undefined =>
+    cfg.sessionPersist ? path.join(cfg.agentWorkspaceRoot, "sessions", sanitize(chatId)) : undefined;
+
+  const sessions: SessionManager = new SessionManager({
     maxConcurrent: cfg.maxConcurrentSessions,
     idleMs: cfg.idleReapMs,
+    // After /new: drop this chat's persisted session files so the fresh session
+    // neither resumes nor leaves stale history on disk.
+    clearHistory: async (chatId) => {
+      const dir = chatSessionDirFor(chatId);
+      if (dir) await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    },
     createClient: async (chatId) => {
       const spaceId = chatTargets.get(chatId)?.spaceId ?? "unknown";
       const dir = workspaceFor(cfg.agentWorkspaceRoot, spaceId);
@@ -57,9 +71,8 @@ async function main(): Promise<void> {
       // Give each chat its own persistent session dir so its conversation
       // history is written to disk (JSONL) and resumed after a restart. When
       // SESSION_PERSIST=false we pass nothing and the session stays in-memory.
-      const chatSessionDir = cfg.sessionPersist
-        ? path.join(cfg.agentWorkspaceRoot, "sessions", sanitize(chatId))
-        : undefined;
+      // After /new, resumeFor() is false once → the new session starts fresh.
+      const chatSessionDir = chatSessionDirFor(chatId);
       return createPiClient({
         cwd: dir,
         agentDir: cfg.piAgentDir,
@@ -77,6 +90,7 @@ async function main(): Promise<void> {
         maxSubagents: cfg.maxSubagents,
         subagentIdleMs: cfg.subagentIdleMs,
         chatSessionDir,
+        resume: sessions.resumeFor(chatId),
       });
     },
   });
@@ -121,6 +135,29 @@ async function main(): Promise<void> {
   const onEvent = (e: NormalizedEvent): void => {
     void (async () => {
       if (e.objectId) e.contextNote = await discussionContext(e);
+
+      // Slash commands are handled by the bridge (never forwarded to the
+      // agent). They only apply to messages that would otherwise trigger a turn
+      // (DM or @-mention), and never to the bot's own messages.
+      if (shouldTrigger(e)) {
+        const stripped = stripBotMention(e.text, cfg.botDisplayName) || e.text;
+        const parsed = parseCommand(stripped);
+        if (parsed) {
+          const ctx = {
+            chatId: e.chatId,
+            getClient: () => sessions.get(e.chatId),
+            ensureClient: () => sessions.ensure(e.chatId),
+            reset: () => sessions.reset(e.chatId),
+            defaultModel: cfg.piModel,
+          };
+          const reply = await handleCommand(parsed.command, parsed.args, ctx);
+          if (reply && reply.trim().length > 0) {
+            await api.sendMessage(e.spaceId, e.chatId, reply, `${e.chatId}-cmd-${Date.now()}`);
+          }
+          return;
+        }
+      }
+
       await router.handle(e);
     })().catch((err) => console.warn(`handle failed: ${String(err)}`));
   };

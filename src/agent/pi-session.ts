@@ -52,7 +52,29 @@ export interface PiClientOptions {
    * session stays in-memory (tests / callers that don't want persistence).
    */
   chatSessionDir?: string;
+  /**
+   * Whether to resume the most recent persisted session in `chatSessionDir`.
+   * Default true (normal restart behavior). Pass false to START FRESH — used
+   * after `/new` so the new conversation does not recall old history.
+   */
+  resume?: boolean;
 }
+
+/** Tool names kept when YOLO / auto-approve mode is OFF (read-only safety set). */
+export const READONLY_TOOLS: readonly string[] = [
+  "anytype_list_objects",
+  "anytype_search",
+  "anytype_read_object",
+  "anytype_download_images",
+  "anytype_download_file",
+  "crop_image",
+  "anytype_list_properties",
+  "anytype_list_types",
+  "anytype_templates",
+  "web_search",
+  "web_fetch",
+  "anytype_watch",
+];
 
 /** Where the baked-in custom model registry lives in the image. */
 const MODELS_SRC = "/app/pi/models.json";
@@ -165,7 +187,12 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   let sessionManager: SessionManager;
   if (opts.chatSessionDir) {
     fs.mkdirSync(opts.chatSessionDir, { recursive: true });
-    sessionManager = SessionManager.continueRecent(opts.cwd, opts.chatSessionDir);
+    // resume === false (after /new) starts a NEW JSONL in the same dir instead
+    // of reopening the most recent one, so old history is not recalled.
+    sessionManager =
+      opts.resume === false
+        ? SessionManager.create(opts.cwd, opts.chatSessionDir)
+        : SessionManager.continueRecent(opts.cwd, opts.chatSessionDir);
   } else {
     sessionManager = SessionManager.inMemory(opts.cwd);
   }
@@ -201,6 +228,18 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     }
   });
 
+  // YOLO / auto-approve: ON means every tool is active. OFF restricts to a
+  // read-only safety set (no create/update/delete/edit/chat-send/upload/
+  // subagent/agent). Default ON.
+  let autoTools = true;
+  const applyTools = (): void => {
+    const names = autoTools ? session.getAllTools().map((t) => t.name) : [...READONLY_TOOLS];
+    session.setActiveToolsByName(names);
+  };
+  // Establish the default (all tools) explicitly, so the agent's active set
+  // matches our model of it from the first turn.
+  applyTools();
+
   return {
     get busy(): boolean {
       return session.isStreaming;
@@ -217,6 +256,39 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     },
     async abort(): Promise<void> {
       await session.abort();
+    },
+    // --- per-chat control ops (slash commands) ---
+    getModel(): string {
+      return session.model?.id ?? "(pi default)";
+    },
+    async setModel(id: string): Promise<string | null> {
+      const model = resolveModel(modelRegistry, id);
+      if (!model) return null;
+      await session.setModel(model as never);
+      return session.model?.id ?? id;
+    },
+    getThinkingLevel(): string {
+      return session.thinkingLevel;
+    },
+    setThinkingLevel(level: string): string {
+      // `/effort max` maps to pi's `xhigh`. Other levels pass through and are
+      // clamped by pi to what the model supports.
+      const mapped = level === "max" ? "xhigh" : level;
+      session.setThinkingLevel(mapped as Parameters<typeof session.setThinkingLevel>[0]);
+      return session.thinkingLevel;
+    },
+    async compact(): Promise<string> {
+      const r = await session.compact();
+      const before = typeof r.tokensBefore === "number" ? `（压缩前 ${r.tokensBefore} tokens）` : "";
+      return `已压缩当前对话${before}`;
+    },
+    setAutoTools(enabled: boolean): string {
+      autoTools = enabled;
+      applyTools();
+      return enabled ? "YOLO 自动模式：开" : "YOLO 自动模式：关";
+    },
+    isAutoTools(): boolean {
+      return autoTools;
     },
   };
 }

@@ -130,4 +130,48 @@ describe("SessionManager", () => {
     // a new client was created for c1 after reaping
     expect(closed.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("ensure returns a live client and reuses it", async () => {
+    const createClient = vi.fn(async () => fakeClient((m) => `r:${m}`));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    const c1 = await mgr.ensure("c1");
+    const c2 = await mgr.ensure("c1");
+    expect(c1).toBe(c2);
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(mgr.get("c1")).toBe(c1);
+    expect(mgr.get("nope")).toBeUndefined();
+  });
+
+  it("reset forgets the client and makes the next build start fresh once", async () => {
+    const seenResume: boolean[] = [];
+    const closed: string[] = [];
+    let mgr: SessionManager;
+    const createClient = vi.fn(async (chatId: string) => {
+      seenResume.push(mgr.resumeFor(chatId));
+      return {
+        get busy() { return false; },
+        async prompt() { return "ok"; },
+        async close() { closed.push(chatId); },
+        async abort() {},
+      };
+    });
+    const clearHistory = vi.fn(async () => {});
+    mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000, clearHistory });
+
+    await mgr.run("c1", "记住 999");
+    expect(mgr.resumeFor("c1")).toBe(true);
+
+    await mgr.reset("c1");
+    expect(closed).toContain("c1");
+    expect(mgr.get("c1")).toBeUndefined();
+    expect(mgr.resumeFor("c1")).toBe(false);
+    expect(clearHistory).toHaveBeenCalledWith("c1");
+
+    // The next run must build a fresh client (resume=false), then the flag is
+    // consumed so later builds resume normally again.
+    await mgr.run("c1", "是多少");
+    expect(seenResume).toEqual([true, false]);
+    expect(mgr.resumeFor("c1")).toBe(true);
+    expect(createClient).toHaveBeenCalledTimes(2);
+  });
 });

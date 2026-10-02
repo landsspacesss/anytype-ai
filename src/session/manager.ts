@@ -3,6 +3,22 @@ export interface ManagedClient {
   prompt(message: string): Promise<string>;
   close(): Promise<void>;
   abort(): Promise<void>;
+  /** Start a fresh conversation for this chat (next client will not resume old history). */
+  reset?(): Promise<void>;
+  /** Compact/condense the conversation. Returns a short status line. */
+  compact?(): Promise<string>;
+  /** Switch model by id; returns the resolved model id, or null if unknown. */
+  setModel?(id: string): Promise<string | null>;
+  /** Current model id (or a placeholder when unset). */
+  getModel?(): string;
+  /** Set the thinking level; returns the level actually applied. */
+  setThinkingLevel?(level: string): string;
+  /** Current thinking level. */
+  getThinkingLevel?(): string;
+  /** Toggle YOLO / auto-approve (all tools) mode; returns a short status. */
+  setAutoTools?(enabled: boolean): string;
+  /** Whether YOLO / auto-approve mode is on. */
+  isAutoTools?(): boolean;
 }
 
 interface Entry {
@@ -17,6 +33,12 @@ export interface SessionManagerOptions {
   maxConcurrent: number;
   idleMs: number;
   now?: () => number;
+  /**
+   * Called by `reset(chatId)` to drop any persisted history for that chat
+   * (e.g. delete the chat's session JSONL). Optional: without it, `reset` still
+   * forgets the in-memory client and starts the next conversation fresh.
+   */
+  clearHistory?: (chatId: string) => void | Promise<void>;
 }
 
 export class SessionManager {
@@ -24,9 +46,20 @@ export class SessionManager {
   private creating = 0;
   private waiters: Array<() => void> = [];
   private now: () => number;
+  // Chats whose NEXT client must start from a clean slate (set by reset()).
+  private freshChats = new Set<string>();
 
   constructor(private opts: SessionManagerOptions) {
     this.now = opts.now ?? Date.now;
+  }
+
+  /**
+   * Whether the next client for this chat should resume persisted history.
+   * False immediately after reset(chatId); the flag is consumed once a client
+   * is (re)created, so subsequent restarts resume normally again.
+   */
+  resumeFor(chatId: string): boolean {
+    return !this.freshChats.has(chatId);
   }
 
   private get liveCount(): number { return this.entries.size + this.creating; }
@@ -48,32 +81,72 @@ export class SessionManager {
     if (w) w();
   }
 
-  async run(chatId: string, prompt: string): Promise<string> {
-    let entry = this.entries.get(chatId);
-    if (!entry) {
-      await this.acquireSlot();
-      let client: ManagedClient;
-      try {
-        client = await this.opts.createClient(chatId);
-      } catch (err) {
-        this.creating--;
-        this.releaseSlot();
-        throw err;
-      }
-      const existing = this.entries.get(chatId);
-      if (existing) {
-        // Lost a race: another run() for this chat created the entry while we awaited.
-        this.creating--;
-        await client.close().catch(() => undefined);
-        this.releaseSlot();
-        entry = existing;
-      } else {
-        entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
-        this.entries.set(chatId, entry);
-        this.creating--;
-      }
+  /**
+   * Return the existing entry for a chat, or create one (respecting the
+   * concurrency cap). Shared by run() and ensure(). The `freshChats` flag is
+   * consumed here (after createClient has read `resumeFor`) so the following
+   * client resumes history normally again.
+   */
+  private async getOrCreate(chatId: string): Promise<Entry> {
+    const found = this.entries.get(chatId);
+    if (found) return found;
+    await this.acquireSlot();
+    let client: ManagedClient;
+    try {
+      client = await this.opts.createClient(chatId);
+    } catch (err) {
+      this.creating--;
+      this.releaseSlot();
+      throw err;
     }
-    const e = entry;
+    this.freshChats.delete(chatId);
+    const existing = this.entries.get(chatId);
+    if (existing) {
+      // Lost a race: another caller created the entry while we awaited.
+      this.creating--;
+      await client.close().catch(() => undefined);
+      this.releaseSlot();
+      return existing;
+    }
+    const entry: Entry = { client, queue: Promise.resolve(), lastUsed: this.now(), pending: 0 };
+    this.entries.set(chatId, entry);
+    this.creating--;
+    return entry;
+  }
+
+  /** Get the live client for a chat, or undefined if none exists yet. */
+  get(chatId: string): ManagedClient | undefined {
+    return this.entries.get(chatId)?.client;
+  }
+
+  /**
+   * Get the live client for a chat, creating one if needed. Used by commands
+   * that must read/modify per-chat agent settings (model, effort, tools, …).
+   */
+  async ensure(chatId: string): Promise<ManagedClient> {
+    const entry = await this.getOrCreate(chatId);
+    entry.lastUsed = this.now();
+    return entry.client;
+  }
+
+  /**
+   * Forget the chat's client so the next run builds a fresh session, and mark
+   * the chat to NOT resume persisted history on that next build. Also invokes
+   * the configured `clearHistory` hook to drop on-disk session files.
+   */
+  async reset(chatId: string): Promise<void> {
+    const e = this.entries.get(chatId);
+    if (e) {
+      this.entries.delete(chatId);
+      await e.client.close().catch(() => undefined);
+      this.releaseSlot();
+    }
+    this.freshChats.add(chatId);
+    await this.opts.clearHistory?.(chatId);
+  }
+
+  async run(chatId: string, prompt: string): Promise<string> {
+    const e = await this.getOrCreate(chatId);
     e.pending++;
     const result = e.queue.then(async () => {
       e.lastUsed = this.now();
