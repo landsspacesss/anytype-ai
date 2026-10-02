@@ -377,6 +377,28 @@ describe("createAnytypeTools", () => {
     expect(text).not.toContain("(untitled)");
   });
 
+  it("attaches an image even when the download reports no image content-type", async () => {
+    const png = await sharp({
+      create: { width: 40, height: 30, channels: 3, background: { r: 5, g: 90, b: 180 } },
+    })
+      .png()
+      .toBuffer();
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        type: "image",
+        properties: { name: "loose" },
+        blocks: [{ type: "image", object_id: "file-1", mime_type: "image/png" }],
+      })),
+      // A loose file-object's download may report an unknown content-type.
+      downloadFileContent: vi.fn(async () => ({ data: png, mimeType: "application/octet-stream" })),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_read_object"), { id: "file-1" });
+    const img = res.content.find((c) => c.type === "image");
+    expect(img).toBeTruthy();
+    expect(img?.mimeType).toBe("image/jpeg");
+  });
+
   it("tolerates malformed objects/blocks when reading", async () => {
     const api = fakeApi({
       getObjectRaw: vi.fn(async () => ({ blocks: [null, 42, { text: 7 }, { text: "ok" }] })),

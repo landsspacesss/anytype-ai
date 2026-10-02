@@ -191,8 +191,10 @@ function extractImages(doc: unknown): Array<{ objectId: string; mimeType: string
  * re-encode as JPEG. Returns base64 + mime type, or null if it isn't a usable
  * raster image. (Astra/DeepSeek accept jpeg/png/webp; we normalise to jpeg.)
  */
-async function resizeForModel(buf: Buffer, mimeType: string): Promise<{ data: string; mimeType: string } | null> {
-  if (!mimeType.startsWith("image/")) return null;
+async function resizeForModel(buf: Buffer): Promise<{ data: string; mimeType: string } | null> {
+  // Don't gate on the response Content-Type: a file-object's download may omit
+  // it (or send application/octet-stream). Let sharp sniff the real format — a
+  // non-image simply fails and is skipped.
   try {
     const out = await sharp(buf)
       .rotate() // honour EXIF orientation
@@ -348,8 +350,8 @@ export function createAnytypeTools(deps: {
         const chosen = images.slice(0, MAX_IMAGES_PER_READ);
         for (const img of chosen) {
           try {
-            const { data, mimeType } = await api.downloadFileContent(spaceId, img.objectId);
-            const resized = await resizeForModel(data, mimeType);
+            const { data } = await api.downloadFileContent(spaceId, img.objectId);
+            const resized = await resizeForModel(data);
             if (resized) content.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
           } catch {
             // Skip an image that fails rather than failing the whole read.
