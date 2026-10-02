@@ -1,9 +1,45 @@
 # Anytype `@ai` Bot — 设计文档
 
 - 日期：2026-10-01
-- 状态：设计已与用户逐节确认，待编写实施计划
+- 状态：**已实现并上线**（2026-10-02）
 - 项目位置：`/home/landspace/anytype-ai-bot`
 - 依赖的既有部署：自建 Anytype 后端 `any-sync-dockercompose`（`/home/landspace/anytype`，MIT）
+- 运维手册见 [`../RUNBOOK.md`](../../RUNBOOK.md)
+
+---
+
+## 0. 实现结果 — 最终架构（取代下文原设计中的对应部分）
+
+设计与实现过程中，有几处**经实测后推翻的决定**。最终形态如下，**与下文原设计冲突时以本节为准**：
+
+| 项 | 原设计 | **最终实现** | 原因 |
+|---|---|---|---|
+| Agent 大脑 | `omp --mode rpc` 子进程 | **内嵌 pi SDK**（`createAgentSession`，同进程） | omp 子进程实测 75–120 秒/回合，且有 RPC 帧、ready 超时、`--name` 不认等一堆坑；pi SDK 内嵌实测 **~4 秒**，无子进程 |
+| 记忆 | omp mnemopi（`llmMode: smol`） | **每空间一个 `MEMORY.md` 文件**，AI 主动写 | mnemopi 每轮都跑 LLM 做记忆提取，慢到不可用；文件方案零开销、按空间隔离、符合"让模型自己整理" |
+| Anytype 操作 | 计划由 `anytype-mcp` 提供 | **自定义 pi 工具**（`anytype_list_objects`/`search`/`read_object`/`create_note`） | pi-core 不内置 MCP；自定义工具无子进程、复用已有 `AnytypeClient` |
+| 容器基础镜像 | node:20 | **node:22** | pi 依赖的 undici 在 Node 20 上会崩 |
+| 会话作用域 | 每 `chat_id` 一个 omp 进程 | **每 `chat_id` 一个内嵌 pi 会话** | 保留原语义，换实现 |
+| 记忆作用域 | 每 `space_id` | **每 `space_id`**（工作区目录 + MEMORY.md） | 不变 |
+| 网络 | 计划用 docker 网络 + 服务名 | **`network_mode: service:anytype-cli`**（共享 netns，走 `127.0.0.1:31012`） | anytype-cli 的 API 只绑回环且校验 Host 头，服务名 origin 被 403 |
+
+**另外修正的（实现/联调阶段）**：
+- SSE **订阅时会回放历史消息**——bot 忽略早于启动时刻的消息（否则对旧消息误回复）。
+- 消息作者字段是 **`author_id`**（不是 `creator`）；**@ 是 `text` 里的内联标签** `<mention object_id="...">名字</mention>`，**没有 `mentions` 数组**。
+- bot 的**成员 id 是随空间变的**（`_participant_<spaceId>_<identity>`），按身份逐空间解析。
+- `--name` 是 **pi** 的参数，**omp 不支持**（旧代码照搬导致启动即失败）。
+
+实际组件（对应下文的抽象划分仍然成立）：
+
+```
+[EventSource]  src/anytype/stream.ts   SSE 订阅 + 回放过滤
+[Router]       src/router/router.ts    触发判定 → 会话 → 回帖
+[SessionMgr]   src/session/manager.ts  每 chat 一会话、并发上限、闲置回收
+[AgentClient]  src/agent/pi-session.ts 内嵌 pi SDK 会话（取代 OmpClient）
+[AnytypeTools] src/agent/anytype-tools.ts  4 个 Anytype 工具
+[ReplySink]    src/reply/sink.ts       分块 + 幂等键发送
+```
+
+---
 
 ## 1. 背景与目标
 
