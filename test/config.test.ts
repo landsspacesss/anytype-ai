@@ -94,6 +94,29 @@ describe("loadConfig", () => {
     expect(bad.maxSubagents).toBe(5);
   });
 
+  it("defaults sessionPersist to true and honors SESSION_PERSIST=false", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.sessionPersist).toBe(true);
+
+    const off = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      SESSION_PERSIST: "false",
+    } as NodeJS.ProcessEnv);
+    expect(off.sessionPersist).toBe(false);
+
+    // Any value other than the literal "false" keeps persistence on.
+    const on = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      SESSION_PERSIST: "true",
+    } as NodeJS.ProcessEnv);
+    expect(on.sessionPersist).toBe(true);
+  });
+
   it("throws when a required value is missing", () => {
     expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/Missing required env var/);
   });

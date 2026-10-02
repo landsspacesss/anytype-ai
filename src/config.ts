@@ -33,6 +33,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     botIdentity: env.BOT_IDENTITY || undefined,
     botDisplayName: env.BOT_DISPLAY_NAME || "anytype-bot",
     agentWorkspaceRoot: env.AGENT_WORKSPACE_ROOT || "/workspace",
+    // Persist per-chat conversation history to disk so it survives a restart.
+    // Set SESSION_PERSIST=false to go back to purely in-memory sessions.
+    sessionPersist: env.SESSION_PERSIST !== "false",
     piAgentDir: env.PI_AGENT_DIR || undefined,
     // DeepSeek V4.1 (`deepseek-flash`) is natively multimodal; see docker/models.json.
     piModel,

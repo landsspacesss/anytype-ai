@@ -45,6 +45,13 @@ export interface PiClientOptions {
   maxSubagents?: number;
   /** Idle (ms) after which a non-busy named sub-agent is reaped (env SUBAGENT_IDLE_MS). Default 900000. */
   subagentIdleMs?: number;
+  /**
+   * Directory holding THIS chat's persisted pi session (JSONL). When set, the
+   * top-level session is continued from the most recent file in it (or created
+   * fresh if none), so history survives a process restart. When unset the
+   * session stays in-memory (tests / callers that don't want persistence).
+   */
+  chatSessionDir?: string;
 }
 
 /** Where the baked-in custom model registry lives in the image. */
@@ -151,12 +158,24 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     idleMs: opts.subagentIdleMs ?? 900000,
   });
 
+  // The TOP-LEVEL per-chat session persists to disk when a session dir is
+  // given: `continueRecent` reopens the most recent JSONL there (or starts one
+  // fresh), so history survives a process restart. Sub-agents (created above)
+  // deliberately stay ephemeral — only this session is durable.
+  let sessionManager: SessionManager;
+  if (opts.chatSessionDir) {
+    fs.mkdirSync(opts.chatSessionDir, { recursive: true });
+    sessionManager = SessionManager.continueRecent(opts.cwd, opts.chatSessionDir);
+  } else {
+    sessionManager = SessionManager.inMemory(opts.cwd);
+  }
+
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     agentDir: opts.agentDir,
     authStorage,
     modelRegistry,
-    sessionManager: SessionManager.inMemory(),
+    sessionManager,
     customTools: createAnytypeTools({
       api: opts.api,
       spaceId: opts.spaceId,

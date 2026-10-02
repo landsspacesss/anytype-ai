@@ -7,6 +7,7 @@ import { extractDiscussionId } from "./anytype/discussion.js";
 import { subscribeChat } from "./anytype/stream.js";
 import { createPiClient, ensureAgentFiles, ensureModelsConfig } from "./agent/pi-session.js";
 import { SessionManager } from "./session/manager.js";
+import { sanitize } from "./util/sanitize.js";
 import { Router } from "./router/router.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
@@ -53,6 +54,12 @@ async function main(): Promise<void> {
       // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
       // (pi auto-loads AGENTS.md from cwd at session creation).
       ensureAgentFiles(dir);
+      // Give each chat its own persistent session dir so its conversation
+      // history is written to disk (JSONL) and resumed after a restart. When
+      // SESSION_PERSIST=false we pass nothing and the session stays in-memory.
+      const chatSessionDir = cfg.sessionPersist
+        ? path.join(cfg.agentWorkspaceRoot, "sessions", sanitize(chatId))
+        : undefined;
       return createPiClient({
         cwd: dir,
         agentDir: cfg.piAgentDir,
@@ -69,6 +76,7 @@ async function main(): Promise<void> {
         webFetchMaxChars: cfg.webFetchMaxChars,
         maxSubagents: cfg.maxSubagents,
         subagentIdleMs: cfg.subagentIdleMs,
+        chatSessionDir,
       });
     },
   });

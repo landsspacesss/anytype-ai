@@ -37,6 +37,8 @@ export interface Config {
   botDisplayName: string;
   /** Root under which each space gets its own agent workspace directory. */
   agentWorkspaceRoot: string;
+  /** Persist each chat's conversation history to disk (env SESSION_PERSIST). Default true. */
+  sessionPersist: boolean;
   /** Optional global pi config dir (env PI_AGENT_DIR); unset -> pi's ~/.pi/agent. */
   piAgentDir?: string;
   /** Model id to run the agent with (env PI_MODEL). Default: deepseek-flash (V4.1). */
