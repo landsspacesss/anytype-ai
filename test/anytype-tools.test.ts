@@ -20,6 +20,10 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
       { id: "obj1", name: "日常试卷1", type: "page" },
       { id: "obj2", name: "考试大纲", type: "page" },
     ]),
+    listObjectsOfType: vi.fn(async () => [
+      { id: "img1", name: "IMG_4127", type: "image" },
+      { id: "img2", name: "IMG_4130", type: "image" },
+    ]),
     search: vi.fn(async () => [{ id: "obj1", name: "日常试卷1", type: "page" }]),
     filteredSearch: vi.fn(async () => [{ id: "obj1", name: "日常试卷1", type: "page" }]),
     getObjectRaw: vi.fn(async () => ({
@@ -164,6 +168,17 @@ describe("createAnytypeTools", () => {
     expect(text).toContain("(page)");
     expect(text).toContain("obj1");
     expect(res.details).toEqual({});
+  });
+
+  it("anytype_list_objects with type lists loose objects of that type", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_list_objects"), { type: "image" });
+    expect(api.listObjectsOfType).toHaveBeenCalledWith(SPACE, "image");
+    expect(api.listObjects).not.toHaveBeenCalled();
+    const text = res.content[0].text;
+    expect(text).toContain("IMG_4127");
+    expect(text).toContain("2 image object(s)");
   });
 
   it("anytype_list_objects honors an optional limit", async () => {

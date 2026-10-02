@@ -127,6 +127,42 @@ export class AnytypeClient {
     return (body.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
   }
 
+  /**
+   * List every object of one type (e.g. "image", "file", "task"). The plain
+   * object list hides loose files/images, but a type-filtered query enumerates
+   * them. Creates a throwaway query, lists its objects, then deletes the query.
+   */
+  async listObjectsOfType(
+    spaceId: string,
+    type: string,
+    limit = 100,
+  ): Promise<Array<{ id: string; name: string; type: string }>> {
+    const qurl = `${this.baseUrl}/v2/spaces/${spaceId}/queries`;
+    const qres = await this.fetchFn(qurl, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ name: `__list_${type}_${Date.now()}__`, type }),
+    });
+    if (!qres.ok) throw new AnytypeApiError(qres.status, "listObjectsOfType(query)");
+    const qid = ((await qres.json()) as { id?: string }).id;
+    if (!qid) return [];
+    try {
+      const ores = await this.fetchFn(
+        `${this.baseUrl}/v2/spaces/${spaceId}/queries/${qid}/objects?limit=${limit}`,
+        { headers: this.headers() },
+      );
+      if (!ores.ok) throw new AnytypeApiError(ores.status, "listObjectsOfType(objects)");
+      const body = (await ores.json()) as { data?: Array<{ id?: string; name?: string; type?: string }> };
+      return (body.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
+    } finally {
+      // Best-effort cleanup of the throwaway query object.
+      await this.fetchFn(`${this.baseUrl}/v2/spaces/${spaceId}/objects/${qid}`, {
+        method: "DELETE",
+        headers: this.headers(),
+      }).catch(() => undefined);
+    }
+  }
+
   async search(
     spaceId: string,
     query: string,

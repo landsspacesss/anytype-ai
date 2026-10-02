@@ -275,17 +275,33 @@ export function createAnytypeTools(deps: {
     name: "anytype_list_objects",
     label: "List Anytype objects",
     description:
-      "List the objects (notes, pages, etc.) in the current Anytype space. Use this to answer questions about how many objects exist or to browse the space.",
-    promptSnippet: "anytype_list_objects — list the objects/notes in the current Anytype space",
+      "List the objects (notes, pages, images, files, tasks, …) in the current Anytype space. " +
+      "With `type` set, lists every object of that type — e.g. `type:\"image\"` reveals the images " +
+      "in the space (including loose images NOT placed in any page, which the default list hides); " +
+      "`type:\"file\"` lists loose files; `type:\"task\"` lists tasks. Use the default (no type) for " +
+      "pages/notes. To see one image's content, pass its id to anytype_read_object.",
+    promptSnippet: "anytype_list_objects — list objects; pass type:\"image\"/\"file\" to find loose images/files",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
+      type: Type.Optional(
+        Type.String({
+          description:
+            "Optional object type key to list (e.g. \"image\", \"file\", \"task\", \"page\"). Reveals loose objects of that type.",
+        }),
+      ),
       limit: Type.Optional(Type.Number({ description: "Optional maximum number of objects to return." })),
     }),
     async execute(_toolCallId, params) {
       try {
-        let items = (await api.listObjects(spaceId)).filter(isContentObject);
+        const type = typeof params.type === "string" ? params.type.trim() : "";
+        // Explicit type → enumerate that type (reveals loose files/images).
+        // Default → the space's content objects (loose files are omitted).
+        let items = type
+          ? await api.listObjectsOfType(spaceId, type)
+          : (await api.listObjects(spaceId)).filter(isContentObject);
         if (typeof params.limit === "number" && params.limit >= 0) items = items.slice(0, params.limit);
-        return textResult(`${items.length} object(s) in the space:\n${renderList(items)}`);
+        const label = type ? `${type} object(s)` : "object(s) in the space";
+        return textResult(`${items.length} ${label}:\n${renderList(items)}`);
       } catch (err) {
         return textResult(`anytype_list_objects failed: ${errMessage(err)}`);
       }
