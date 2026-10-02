@@ -18,6 +18,7 @@ Anytype 是一个很棒的、私密的、本地优先的 Notion 替代品——�
 - **读任意散文件** —— 下载 PDF / docx / xlsx / txt，用 shell 工具（`pdftotext`/`unzip`/`python3`）抽内容。
 - **联网** —— `web_search`（托管搜索）和 `web_fetch`（内置 [Lightpanda](https://github.com/lightpanda-io/browser) 无头浏览器，返回 Markdown）。
 - **记忆** —— 每个空间一份 `MEMORY.md`，AI 会主动记录。
+- **控制台（全局助手）** —— 指定一个空间为控制台后，可在其中跨空间只读、读全局/各空间记忆；控制台内不可写。
 - **定时订阅** —— 按 cron 订阅某个对象，它一变就让 AI 执行你的指令（如"总结变化"）并发回。
 - **子代理** —— 一次性 `subagent`；以及常驻命名子代理（`agent` 的 spawn/message/list/kill），可跨轮对话。
 - **打断（barge-in）** —— 它还在干活的**时候你再发一条**，旧的那条就被丢弃、当前回合被打断，**优先处理最新的消息**。默认策略绝不在**写操作**（建/改/删）进行到一半时打断。

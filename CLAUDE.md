@@ -71,6 +71,14 @@ Key facts that span multiple files:
   `AGENTS.md`, `MEMORY.md`, `files/`, `images/`), but the conversation is per **chat**
   (its persisted JSONL lives in `/workspace/sessions/<chatId>/`). Memory is shared
   across a space's chats; conversation history is not.
+- **The console (global assistant) is one designated space that gets global powers.**
+  `main.ts` picks it from `CONSOLE_SPACE_ID` (env, wins) or `<workspaceRoot>/console.json`
+  (`{spaceId, chatId?, bootstrappedAt}`). A console session gets `CONSOLE_TOOLS` — an
+  **unconditionally read-only** set (no writers; `/yolo` cannot widen it) plus
+  `anytype_list_spaces` / `anytype_memories` and a `space` (id or name) param on the
+  read tools (`anytype_list_objects` / `anytype_search` / `anytype_read_object`) so it
+  can read from **any** joined space. Its workspace is `/workspace/_global` (its memory
+  is the global one); **normal sessions are unchanged** and cannot see other spaces.
 - **The model is registered manually.** `docker/models.json` adds DeepSeek V4.1
   (`deepseek-flash`, multimodal) because pi's built-in table predates it; pi's agent
   dir is a volume mount, so `ensureModelsConfig` copies it in at startup.
