@@ -67,6 +67,9 @@ WORKDIR /app
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# gRPC proto for the anytype-heart bridge; process.cwd() is /app, so the client
+# resolves it at /app/proto/anytype.proto.
+COPY proto ./proto
 # Custom model registry (adds DeepSeek V4.1 / `deepseek-flash`, which pi's
 # built-in table predates). Copied into the agent dir at startup, because the
 # agent dir is a volume mount that would otherwise shadow a baked-in file.
