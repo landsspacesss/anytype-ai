@@ -149,6 +149,13 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_download_images` | 把某篇的**图片下载到容器**（`/workspace/<space>/images/<id>/`），返回路径和像素尺寸 |
 | `crop_image` | **查看/裁剪**一张本地图片：给区域比例（x,y,width,height 取 0~1 的小数）就裁剪放大——看小字/手写最有效；不给则看整图 |
 | `anytype_create_note` | 新建页面 |
+| `anytype_update_object` | **改**标题 / 追加正文 |
+| `anytype_delete_object` | **删**对象 |
+| `anytype_set_property` | 给对象**设属性/打标签** |
+| `anytype_list_properties` / `anytype_create_property` | 列/建**属性**（`text/number/select/multi_select/date/checkbox/url/email/phone/files/objects`）|
+| `anytype_list_types` | 列**类型** |
+| `anytype_create_collection` | 建**集合**（把对象归类到一起）|
+| `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
