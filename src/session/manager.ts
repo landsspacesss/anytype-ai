@@ -40,6 +40,8 @@ export interface ManagedClient {
   setThinkingLevel?(level: string): string;
   /** Current thinking level. */
   getThinkingLevel?(): string;
+  /** Thinking levels this chat's model actually supports (e.g. ["off","high","max"]). */
+  getAvailableThinkingLevels?(): string[];
   /** Toggle YOLO / auto-approve (all tools) mode; returns a short status. */
   setAutoTools?(enabled: boolean): string;
   /** Whether YOLO / auto-approve mode is on. */

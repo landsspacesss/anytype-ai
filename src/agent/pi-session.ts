@@ -364,6 +364,10 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     getThinkingLevel(): string {
       return session.thinkingLevel;
     },
+    getAvailableThinkingLevels(): string[] {
+      // pi exposes its own level names; surface `xhigh` as the user-facing "max".
+      return session.getAvailableThinkingLevels().map((l) => (l === "xhigh" ? "max" : l));
+    },
     setThinkingLevel(level: string): string {
       // `/effort max` maps to pi's `xhigh`. Other levels pass through and are
       // clamped by pi to what the model supports.

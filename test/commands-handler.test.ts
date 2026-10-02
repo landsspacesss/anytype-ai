@@ -15,6 +15,8 @@ function fakeClient(overrides: Partial<ManagedClient> = {}) {
     getModel: vi.fn(() => "deepseek-flash"),
     setThinkingLevel: vi.fn((level: string) => (level === "max" ? "xhigh" : level)),
     getThinkingLevel: vi.fn(() => "medium"),
+    // Mirror DeepSeek V4: only off/high/max exist.
+    getAvailableThinkingLevels: vi.fn(() => ["off", "high", "max"]),
     setAutoTools: vi.fn((enabled: boolean) => (enabled ? "YOLO 自动模式：开" : "YOLO 自动模式：关")),
     isAutoTools: vi.fn(() => true),
     ...overrides,
@@ -91,11 +93,12 @@ describe("handleCommand", () => {
     expect(reply).toMatch(/未知模型/);
   });
 
-  it("/effort with no arg reports the current level", async () => {
+  it("/effort with no arg reports the current level and the model's levels", async () => {
     const c = fakeClient();
     const { context } = ctx(c);
     const reply = await handleCommand("effort", "", context);
     expect(reply).toContain("medium");
+    expect(reply).toContain("off|high|max");
   });
 
   it("/effort high sets the thinking level", async () => {
@@ -114,12 +117,22 @@ describe("handleCommand", () => {
     expect(reply).toContain("xhigh");
   });
 
+  it("/effort rejects a level the model does not support, without touching the client", async () => {
+    const c = fakeClient();
+    const { context, ensure } = ctx(c);
+    const reply = await handleCommand("effort", "low", context);
+    expect(ensure).not.toHaveBeenCalled();
+    expect(c.setThinkingLevel).not.toHaveBeenCalled();
+    expect(reply).toMatch(/不支持/);
+    expect(reply).toContain("off|high|max");
+  });
+
   it("/effort bogus is rejected without touching the client", async () => {
     const c = fakeClient();
     const { context, ensure } = ctx(c);
     const reply = await handleCommand("effort", "bogus", context);
     expect(ensure).not.toHaveBeenCalled();
-    expect(reply).toMatch(/无效/);
+    expect(reply).toMatch(/不支持/);
   });
 
   it("/yolo with no arg reports the current state (default on)", async () => {

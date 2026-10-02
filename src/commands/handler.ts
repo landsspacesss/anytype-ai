@@ -35,7 +35,7 @@ export const HELP_TEXT = [
   "/clear — 同 /new",
   "/compact — 压缩/精简当前对话",
   "/model [名称] — 查看或切换本对话的模型",
-  "/effort [low|medium|high|max] — 查看或设置思考级别",
+  "/effort [档位] — 查看或设置思考级别（档位取决于模型，通常 off|high|max）",
   "/yolo [on|off] — 开关 YOLO 自动模式（默认开）",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
   "/help — 显示本帮助",
@@ -82,14 +82,22 @@ export async function handleCommand(
     }
 
     case "effort": {
+      // The levels a model actually supports vary (DeepSeek V4 only has
+      // off|high|max); report the real set rather than a fixed list, so we
+      // never silently clamp a level the model can't reach.
+      const live = ctx.getClient();
+      const available = live?.getAvailableThinkingLevels?.() ?? [];
+      const availText = available.length > 0 ? available.join("|") : "low|medium|high|max";
       if (!args) {
-        const client = ctx.getClient();
-        const current = client?.getThinkingLevel?.() ?? "默认";
-        return `当前思考级别：${current}`;
+        const current = live?.getThinkingLevel?.() ?? "默认";
+        return `当前思考级别：${current}（本模型可用：${availText}）`;
       }
       const level = args.toLowerCase();
-      if (!EFFORT_LEVELS.has(level)) {
-        return `无效的思考级别：${args}（可选 low|medium|high|max）`;
+      const ok = available.length > 0
+        ? available.includes(level) || (level === "xhigh" && available.includes("max"))
+        : EFFORT_LEVELS.has(level);
+      if (!ok) {
+        return `本模型不支持思考级别「${args}」，可用：${availText}`;
       }
       const client = await ctx.ensureClient();
       if (!client.setThinkingLevel) return "当前会话不支持设置思考级别。";
