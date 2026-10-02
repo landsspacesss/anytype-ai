@@ -1,50 +1,48 @@
 # syntax=docker/dockerfile:1
 
+# NOTE: the embedded pi SDK (@earendil-works/pi-coding-agent, via undici 8) and
+# pi's own `engines` field both require Node >= 22.19.0; it throws on Node 20
+# ("webidl.util.markAsUncloneable is not a function"). The images below are
+# therefore node:22, not node:20.
+
 # ---------------------------------------------------------------------------
-# Stage 1 — build: compile TypeScript to dist/.
-# The runtime code has NO third-party production dependencies (only Node
-# builtins + compiled local .js), so nothing is copied from here into the
-# runtime image except the compiled output.
+# Stage 1 — deps: production node_modules only (pi SDK + its transitive deps).
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json* tsconfig.json ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# ---------------------------------------------------------------------------
+# Stage 2 — build: compile TypeScript to dist/.
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS builder
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
 COPY src ./src
 RUN npm ci && npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2 — runtime: Node 20 + omp + the compiled bot.
+# Stage 3 — runtime: Node 22 + the compiled bot + the pi SDK node_modules.
+# No omp subprocess anymore: the agent runs in-process via the pi SDK.
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl bash git \
+      ca-certificates bash git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install omp (phase0 Task 0.3).
-# Stock installer is preferred: github.com is reachable from this build env
-# (controller re-test 2026-10-02: github.com -> 200, omp.sh -> 200). The
-# installer drops the prebuilt binary at $HOME/.local/bin/omp and smoke-tests
-# it with `--version`.
-#
-# FALLBACK (only if this layer fails downloading from github.com — the
-# Task 0.3 transient timeout): replace the RUN below with the api.github.com
-# release-asset download documented in
-# docs/superpowers/plans/phase0-findings.md (Task 0.3, Step 1), which installs
-# the same binary to /usr/local/bin/omp.
-RUN curl -fsSL https://omp.sh/install | sh
-ENV PATH="/root/.local/bin:/usr/local/bin:${PATH}"
-
-# omp refuses to start without a model provider key ("No models available").
-# The key is supplied at runtime via `env_file: .env` and is NEVER baked in.
+# The model provider key is supplied at runtime via `env_file: .env` and is
+# NEVER baked into the image.
 
 WORKDIR /app
+COPY package.json ./
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY docker/omp-config.yml /root/.omp/agent/config.yml
 
-# Strict isolation: the only writable host-backed path is /workspace (the
-# per-space omp workspace volume). omp state lives under /root/.omp/agent.
-RUN mkdir -p /workspace
-ENV OMP_WORKSPACE_ROOT=/workspace
+# Writable dirs: /workspace holds the per-space agent workspace volume;
+# /root/.pi/agent is pi's global config/auth dir (never baked credentials in).
+RUN mkdir -p /workspace /root/.pi/agent
+ENV AGENT_WORKSPACE_ROOT=/workspace
 
 CMD ["node", "dist/main.js"]

@@ -1,16 +1,15 @@
-import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config.js";
 import { AnytypeClient } from "./anytype/client.js";
 import { resolveBotParticipantId } from "./anytype/members.js";
 import { subscribeChat } from "./anytype/stream.js";
-import { OmpClient } from "./omp/client.js";
+import { createPiClient, ensureAgentFiles } from "./agent/pi-session.js";
 import { SessionManager } from "./session/manager.js";
 import { Router } from "./router/router.js";
 import { ReplySink } from "./reply/sink.js";
 import type { NormalizedEvent } from "./types.js";
 
-/** omp memory scope is per-SPACE: one workspace directory per space id. */
+/** Agent memory scope is per-SPACE: one workspace directory per space id. */
 function workspaceFor(root: string, spaceId: string): string {
   return path.join(root, spaceId);
 }
@@ -36,15 +35,11 @@ async function main(): Promise<void> {
     idleMs: cfg.idleReapMs,
     createClient: async (chatId) => {
       const spaceId = chatTargets.get(chatId)?.spaceId ?? "unknown";
-      const dir = workspaceFor(cfg.ompWorkspaceRoot, spaceId);
-      fs.mkdirSync(dir, { recursive: true });
-      return OmpClient.spawn({
-        bin: cfg.ompBin,
-        // omp does NOT support --name (that is a pi flag); passing it makes omp
-        // exit with "unknown flag: --name" before it ever emits `ready`.
-        args: ["--mode", "rpc", "--no-session"],
-        cwd: dir,
-      });
+      const dir = workspaceFor(cfg.agentWorkspaceRoot, spaceId);
+      // Seed a per-space AGENTS.md/MEMORY.md contract before the session starts
+      // (pi auto-loads AGENTS.md from cwd at session creation).
+      ensureAgentFiles(dir);
+      return createPiClient({ cwd: dir, agentDir: cfg.piAgentDir });
     },
   });
 

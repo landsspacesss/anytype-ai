@@ -37,7 +37,9 @@ services:
     restart: unless-stopped
     env_file: /home/landspace/anytype-ai-bot/.env
     volumes:
-      - bot_state:/root/.omp/agent
+      # pi's global config/auth dir (the embedded SDK agent replaces the omp
+      # subprocess; state now lives under /root/.pi/agent).
+      - bot_state:/root/.pi/agent
       - bot_workspace:/workspace
     # Share anytype-cli's netns -> Host header 127.0.0.1:31012 (allowlisted) and
     # the loopback-only API bind is reachable.

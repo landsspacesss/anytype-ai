@@ -33,8 +33,10 @@ export interface Config {
   botParticipantId: string;
   botIdentity?: string;
   botDisplayName: string;
-  ompBin: string;
-  ompWorkspaceRoot: string;
+  /** Root under which each space gets its own agent workspace directory. */
+  agentWorkspaceRoot: string;
+  /** Optional global pi config dir (env PI_AGENT_DIR); unset -> pi's ~/.pi/agent. */
+  piAgentDir?: string;
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;

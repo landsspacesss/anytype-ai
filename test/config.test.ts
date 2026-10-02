@@ -11,7 +11,8 @@ describe("loadConfig", () => {
     expect(cfg.apiBaseUrl).toBe("http://anytype-cli:31012");
     expect(cfg.apiKey).toBe("k");
     expect(cfg.botParticipantId).toBe("pid");
-    expect(cfg.ompBin).toBe("omp");
+    expect(cfg.agentWorkspaceRoot).toBe("/workspace");
+    expect(cfg.piAgentDir).toBeUndefined();
     expect(cfg.maxConcurrentSessions).toBe(3);
     expect(cfg.idleReapMs).toBe(900000);
     expect(cfg.replyMaxLen).toBe(4000);
