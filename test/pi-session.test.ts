@@ -126,6 +126,22 @@ describe("effectiveToolNames (3 modes)", () => {
   });
 });
 
+describe("effectiveToolNames — console lock", () => {
+  const all = ["read", "anytype_create_note", "anytype_run_in_space"];
+  it("console LOCKED → CONSOLE_TOOLS only, no worker tool", () => {
+    const names = effectiveToolNames({ isConsole: true, mode: "auto", allToolNames: all, consoleUnlocked: false });
+    expect(names).toContain("anytype_list_spaces");
+    expect(names).not.toContain("anytype_run_in_space");
+    expect(names).not.toContain("anytype_create_note");
+  });
+  it("console UNLOCKED → CONSOLE_TOOLS + worker tool, still no writers", () => {
+    const names = effectiveToolNames({ isConsole: true, mode: "auto", allToolNames: all, consoleUnlocked: true });
+    expect(names).toContain("anytype_list_spaces");
+    expect(names).toContain("anytype_run_in_space");
+    expect(names).not.toContain("anytype_create_note");
+  });
+});
+
 describe("buildSessionResourceLoader (approval gate wiring)", () => {
   // Regression guard for the REAL production builder: the SDK uses a
   // caller-supplied loader AS-IS (it only auto-reloads a loader it builds

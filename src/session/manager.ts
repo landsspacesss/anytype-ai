@@ -48,6 +48,10 @@ export interface ManagedClient {
   setAutoTools?(enabled: boolean): string;
   /** Whether YOLO / auto-approve mode is on. */
   isAutoTools?(): boolean;
+  /** Console only: unlock/lock worker dispatch; returns the resulting lock state. */
+  setConsoleUnlocked?(on: boolean): boolean;
+  /** Console only: whether the console is currently unlocked. */
+  isConsoleUnlocked?(): boolean;
   /** Set the approval mode; returns the mode actually applied. */
   setApprovalMode?(mode: ApprovalMode): ApprovalMode;
   /** Current approval mode (a console session always reports "readonly"). */

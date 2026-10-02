@@ -67,6 +67,8 @@ export interface PiClientOptions {
   interruptPolicy?: InterruptPolicy;
   /** True for the global-console session: read-only tool set, global workspace. */
   isConsole?: boolean;
+  /** Console only: whether the console is unlocked (may dispatch workers). Default false. */
+  consoleUnlocked?: boolean;
   /** Root dir holding per-space workspaces (used for the console's memory aggregate). */
   agentWorkspaceRoot?: string;
   /**
@@ -110,7 +112,7 @@ export const CONSOLE_TOOLS: readonly string[] = [
 ];
 
 /** Effective tool names for a session.
- *  - console → always read-only (CONSOLE_TOOLS)
+ *  - console → always read-only (CONSOLE_TOOLS); + the worker tool when UNLOCKED
  *  - auto / ask → all tools (ask blocks via the gate, not the tool set)
  *  - readonly → safe tools + subagents (children inherit safe-only)
  */
@@ -118,8 +120,11 @@ export function effectiveToolNames(o: {
   isConsole: boolean;
   mode: ApprovalMode;
   allToolNames: string[];
+  consoleUnlocked?: boolean;
 }): string[] {
-  if (o.isConsole) return [...CONSOLE_TOOLS];
+  if (o.isConsole) {
+    return [...CONSOLE_TOOLS, ...(o.consoleUnlocked ? ["anytype_run_in_space"] : [])];
+  }
   if (o.mode === "readonly") return [...SAFE_TOOLS, "subagent", "agent"];
   return [...o.allToolNames];
 }
@@ -451,12 +456,15 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
 
   // Approval mode drives the tool set (readonly) and the gate (ask).
   let approvalMode: ApprovalMode = opts.approvalMode ?? "auto";
+  // Console lock: when unlocked, the console additionally gets the worker tool.
+  let consoleUnlocked = opts.consoleUnlocked === true;
   const applyTools = (): void => {
     session.setActiveToolsByName(
       effectiveToolNames({
         isConsole: opts.isConsole === true,
         mode: approvalMode,
         allToolNames: session.getAllTools().map((t) => t.name),
+        consoleUnlocked,
       }),
     );
   };
@@ -539,6 +547,15 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     },
     isAutoTools(): boolean {
       return approvalMode === "auto";
+    },
+    setConsoleUnlocked(on: boolean): boolean {
+      if (opts.isConsole !== true) return false; // normal sessions have no console lock
+      consoleUnlocked = on;
+      applyTools();
+      return consoleUnlocked;
+    },
+    isConsoleUnlocked(): boolean {
+      return opts.isConsole === true && consoleUnlocked;
     },
     setInterruptPolicy(p: InterruptPolicy): void {
       interruptPolicy = p;
