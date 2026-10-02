@@ -115,6 +115,14 @@ Key facts that span multiple files:
 - **The model is registered manually.** `docker/models.json` adds DeepSeek V4.1
   (`deepseek-flash`, multimodal) because pi's built-in table predates it; pi's agent
   dir is a volume mount, so `ensureModelsConfig` copies it in at startup.
+- **Engine-orchestrated workflows** live in `src/workflow/*` (`schema.ts` parse/validate
+  + `render`/`evalIf`, `store.ts` per-run dirs, `steps.ts` the four executors, `runner.ts`
+  order/`if`/`retry`/resume, `registry.ts` discovery). Definitions are
+  `docker/workflows/<name>/workflow.yaml`; step types are `shell`/`anytype`/`http`/`agent`,
+  and **only `agent` steps call the model** (via the console worker's space-bound
+  `runInSpace`). `ensureWorkflowsConfig` copies `docker/workflows/*` into the agent dir's
+  `workflows/` at boot (mirrors `ensureSkillsConfig`); manual `/run` + the cron trigger are
+  wired in `main.ts`.
 - **Watches poll + diff** — Anytype has **no object-change event stream**. Each watch
   carries a 5-field cron evaluated in **local time** (`TZ`); `pollDueWatches` fires due
   watches once per matching minute, and a watch with a `prompt` runs an agent turn.

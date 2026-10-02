@@ -201,6 +201,8 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `/deny` | **拒绝**待批准的操作（见第 7 节）|
 | `/interrupt [now\|step]` | **打断策略**：`now`=新消息一到就打断当前回合；`step`=**等当前这一步**（思考/读）结束再打断——**写操作进行中则等它写完**（默认）。设置**立即生效**，会作用于进行中的回合 |
 | `/join <链接>` | **加入空间**（邀请链接）或**接入控制台**（你的 1:1 链接）——不经 agent，直接处理（见第 8 节）|
+| `/run <名> [k=v …]` | **跑工作流**：按序执行确定性步骤（见〈工作流（Workflows）〉一节）；`/run <名> --resume <runId>` 从断点续跑 |
+| `/runs` | 列出最近的工作流运行（见〈工作流（Workflows）〉一节）|
 | `/help` | 列出指令 |
 
 > 指令只在**会触发**的消息里生效（即私聊，或被 @ 的群聊消息）。执行指令**不经过** agent，直接回结果。
@@ -334,6 +336,60 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 - **⚠️ 绝不要调用其他 RPC**：有些 anytype-heart 方法是**已移除的桩**，会 `panic("should be removed")`、**打死 anytype-cli 进程**——之后 bot 的 `service:anytype-cli` netns 变陈旧（日志全是 `fetch failed`），必须 `docker compose … up -d --force-recreate --no-deps ai-bot` 才能恢复。（早前探测 `WorkspaceGetAll` 就是这样。）
 
 **⚠️ 已知限制**：对一个**已存在**的 1:1 空间调用 `WorkspaceCreate` 会**挂到客户端 ~15 秒超时**——因为 heart 尝试重发 inbox 邀请、而在自建网络上取不到对端 profile（`inboxsender: … wait profile: got nil profile`）。**全新**的 1:1 则几秒返回。实际影响：用链接 `/join` 一个**新的** 1:1 没问题；对**已接入**的控制台重跑可能返回超时（**无害**——控制台本来就能用）。
+
+---
+
+## 工作流（Workflows）
+
+**工作流 = 引擎编排的一串有序步骤**（像 GitHub Actions），**确定性执行**；只有**必要的那一步**才调用 AI（`agent` 是四种步骤之一，不是全程 agent）。引擎负责按序跑、记录每步状态/日志、失败重试、中断后从断点续跑。它与「技能」分开存放：技能是"给 agent 的知识"，工作流是"给引擎的脚本"。
+
+**定义**：`docker/workflows/<name>/workflow.yaml`（源码内；构建镜像时 `COPY docker/workflows /app/workflows`，启动时由 `ensureWorkflowsConfig` 拷进 pi agent 目录的 `workflows/`，**只补缺不覆盖**——改已部署过的先删卷内副本再重建，同技能）。字段：
+
+| 字段 | 说明 |
+|---|---|
+| `name` | **必填**，工作流名（`/run <名>` 用它）|
+| `description` | 可选，说明文字 |
+| `on.cron` | 可选，5 段 cron（**本地时区**）；缺省=仅手动 |
+| `on.notify` | 可选，cron 跑时的**触发聊天**（结果发到哪个 chat）|
+| `steps` | **必填**，非空数组，按序执行 |
+
+每个 step 有 `id`（必填、唯一）、`uses`（步骤类型）、`with`（参数），可选 `if` / `retry`。
+
+**四种步骤类型**（`with` 键）：
+
+| `uses` | `with` 键 | 输出（存 `steps.<id>.output`）|
+|---|---|---|
+| `shell` | `run`（命令串，**必填**）、可选 `cwd` | stdout（超 8000 字符截断）|
+| `anytype` | `op`（必填）+ 该 op 参数；可选 `space`（缺省=触发聊天的空间）。已实现 op：`read_object`(`id`)、`search`(`query`)、`list_objects`、`create_note`(`name`/`markdown`)、`send_message`(`chat`/`text`) | 结果文本 / JSON |
+| `http` | `url`（**必填**）、可选 `method`（默认 `GET`）/ `headers` / `body` | 响应体（截断）|
+| `agent` | `prompt`（**必填**）、可选 `space` / `tools` | 绑目标 space 的一次性子会话返回的**文本** |
+
+**变量插值** `{{ … }}`：可用 `{{ steps.<id>.output }}`（前一步输出）、`{{ on.cron }}` / `{{ on.notify }}`（触发上下文）。**只做字面替换**（未知变量→空串），**不是表达式引擎**。
+
+**`if:`**：简单条件——`<左> == <右>` / `<左> != <右>`（字符串比较，两侧引号会剥掉），否则按整串**真值**（空 / `false` / `0` / `no` → 假）。**`retry: N`**：该步失败后**额外重试** N 次（默认 0）。
+
+### 运行与续跑
+
+| 命令 | 作用 |
+|---|---|
+| `/run <名> [k=v …]` | 手动跑一个工作流（结果回帖在**发出命令的聊天**）|
+| `/run <名> --resume <runId>` | 从**第一个非 `done` 的步骤**续跑（已完成的步不重跑，用其存下的 output）|
+| `/runs` | 列出最近 10 条运行（新→旧）|
+
+- 每个 run 一个目录 **`/workspace/workflow-runs/<id>/`**（可用 `WORKFLOW_RUN_DIR` 覆盖）：
+  - `state.json`：`{ id, name, trigger, chatId, spaceId, status, steps:[{id,uses,status,output?,error?,startedAt,endedAt}] }`；run `status ∈ running|done|failed`，步 `status ∈ pending|running|done|failed|skipped`。
+  - `log.ndjson`：逐步日志；`steps/<id>.out`：该步产出。
+- **失败语义**：某步失败（重试用尽）→ **中止**，run 标 `failed`，状态保留；用 `--resume` 从那一步继续。
+- **cron 触发**：`on.cron` 命中当前（本地）分钟即起一次 run（每个工作流每分钟至多一次）；该 run 的**触发聊天**为 `on.notify`。
+- **工作流状态对话**：引擎在每步状态变化时投递生命周期事件（`▶ 步名 …`、`✅/❌/⏭`）到一个**专门的聊天**——**仅当** env `WORKFLOW_STATUS_CHAT` 设了对应 chat id **且**该聊天被发现了才投递；**不会自动建群**（未设=不投递状态事件）。
+
+**v1 限制**：
+
+- `k=v` 参数目前被**接受但尚未注入模板**（保留给后续）。
+- `agent` 步骤的 `tools:` 过滤**暂未生效**（总是全工具）。
+- `{{ env.X }}` 目前**恒为空**（v1 不注入容器 env）。
+- `shell` / `http` 步骤**不额外加审批闸门**（与普通会话里的 bash 同等待遇）。
+- 状态对话**不会自动创建**，需显式设 `WORKFLOW_STATUS_CHAT`。
 
 ---
 

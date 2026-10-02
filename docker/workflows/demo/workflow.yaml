@@ -1,0 +1,12 @@
+name: demo
+description: 演示工作流：shell + http + shell（不依赖目标空间，只用 shell/http）
+steps:
+  - id: hello
+    uses: shell
+    with: { run: "echo hello-from-workflow" }
+  - id: fetch
+    uses: http
+    with: { url: "https://example.com" }
+  - id: report
+    uses: shell
+    with: { run: "echo 'fetched {{ steps.fetch.output }}' | head -c 120" }

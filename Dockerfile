@@ -79,6 +79,10 @@ COPY docker/models.json /app/pi/models.json
 # dir's skills/ at startup by ensureSkillsConfig (same volume-mount reason).
 COPY docker/skills /app/skills
 
+# Baked-in workflows (docker/workflows/<name>/workflow.yaml) — copied into the
+# agent dir's workflows/ at startup by ensureWorkflowsConfig (same volume-mount reason).
+COPY docker/workflows /app/workflows
+
 # Writable dirs: /workspace holds the per-space agent workspace volume;
 # /root/.pi/agent is pi's global config/auth dir (never baked credentials in).
 RUN mkdir -p /workspace /root/.pi/agent
