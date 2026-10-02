@@ -44,6 +44,30 @@ function isContentObject(o: ObjectRef): boolean {
   return !NON_CONTENT_TYPES.has((o.type || "").toLowerCase());
 }
 
+/**
+ * Resolve a space reference to an id. Empty → fallback. An exact id passes
+ * through. Otherwise it is matched (exact, case-insensitive) against space
+ * NAMES via listSpaces; no match → fallback. Never throws.
+ */
+export async function resolveSpaceId(
+  api: AnytypeClient,
+  value: string | undefined,
+  fallback: string,
+): Promise<string> {
+  const v = (value ?? "").trim();
+  if (v.length === 0) return fallback;
+  try {
+    const spaces = await api.listSpaces();
+    if (spaces.some((s) => s.id === v)) return v;
+    const lower = v.toLowerCase();
+    const byName = spaces.find((s) => (s.name ?? "").toLowerCase() === lower);
+    if (byName) return byName.id;
+  } catch {
+    // fall through to fallback
+  }
+  return fallback;
+}
+
 /** Build an AgentToolResult carrying a single text blob. */
 function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, never> } {
   return { content: [{ type: "text", text }], details: {} };
@@ -342,6 +366,15 @@ export function createAnytypeTools(deps: {
    * they cannot create further agents.
    */
   agentRegistry?: SubagentRegistry;
+  /**
+   * When set, this session is the GLOBAL CONSOLE: cross-space read tools and
+   * the memory aggregate are registered. Absent for normal sessions, which
+   * stay confined to `spaceId`.
+   */
+  console?: {
+    /** Root dir holding per-space workspaces (`/workspace`). */
+    workspaceRoot: string;
+  };
 }): ToolDefinition[] {
   const {
     api,
@@ -361,6 +394,7 @@ export function createAnytypeTools(deps: {
     runFetch,
     runSubagent,
     agentRegistry,
+    console: consoleDep,
   } = deps;
 
   /** The effective web-fetch impl: an injected one, else the Lightpanda-backed default. */
@@ -404,15 +438,19 @@ export function createAnytypeTools(deps: {
         }),
       ),
       limit: Type.Optional(Type.Number({ description: "Optional maximum number of objects to return." })),
+      ...(consoleDep
+        ? { space: Type.Optional(Type.String({ description: "Optional space id or name to read from (default: the current space)." })) }
+        : {}),
     }),
     async execute(_toolCallId, params) {
       try {
+        const target = await resolveSpaceId(api, consoleDep ? (params as { space?: string }).space : undefined, spaceId);
         const type = typeof params.type === "string" ? params.type.trim() : "";
         // Explicit type → enumerate that type (reveals loose files/images).
         // Default → the space's content objects (loose files are omitted).
         let items = type
-          ? await api.listObjectsOfType(spaceId, type)
-          : (await api.listObjects(spaceId)).filter(isContentObject);
+          ? await api.listObjectsOfType(target, type)
+          : (await api.listObjects(target)).filter(isContentObject);
         if (typeof params.limit === "number" && params.limit >= 0) items = items.slice(0, params.limit);
         const label = type ? `${type} object(s)` : "object(s) in the space";
         return textResult(`${items.length} ${label}:\n${renderList(items)}`);
@@ -437,17 +475,21 @@ export function createAnytypeTools(deps: {
             "A FilterNode[] (or group) for field-based filtering, passed through to the API as `filters`.",
         }),
       ),
+      ...(consoleDep
+        ? { space: Type.Optional(Type.String({ description: "Optional space id or name to read from (default: the current space)." })) }
+        : {}),
     }),
     async execute(_toolCallId, params) {
       try {
+        const target = await resolveSpaceId(api, consoleDep ? (params as { space?: string }).space : undefined, spaceId);
         const hasFilters = params.filters !== undefined;
         const query = params.query ?? "";
         if (!hasFilters && query.length === 0) {
           return textResult("anytype_search: provide a `query` and/or `filters`.");
         }
         const items = hasFilters
-          ? await api.filteredSearch(spaceId, { query, filters: params.filters })
-          : await api.search(spaceId, query);
+          ? await api.filteredSearch(target, { query, filters: params.filters })
+          : await api.search(target, query);
         const filtered = items.filter(isContentObject);
         const label = hasFilters
           ? `${query.length > 0 ? `"${query}" ` : ""}filters ${JSON.stringify(params.filters)}`
@@ -468,10 +510,14 @@ export function createAnytypeTools(deps: {
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       id: Type.String({ description: "The object id to read." }),
+      ...(consoleDep
+        ? { space: Type.Optional(Type.String({ description: "Optional space id or name to read from (default: the current space)." })) }
+        : {}),
     }),
     async execute(_toolCallId, params) {
       try {
-        const doc = await api.getObjectRaw(spaceId, params.id);
+        const target = await resolveSpaceId(api, consoleDep ? (params as { space?: string }).space : undefined, spaceId);
+        const doc = await api.getObjectRaw(target, params.id);
         const content: Content[] = [{ type: "text", text: renderObject(doc) }];
 
         // Attach the page's images so the (multimodal) model can actually see
@@ -480,7 +526,7 @@ export function createAnytypeTools(deps: {
         const chosen = images.slice(0, MAX_IMAGES_PER_READ);
         for (const img of chosen) {
           try {
-            const { data } = await api.downloadFileContent(spaceId, img.objectId);
+            const { data } = await api.downloadFileContent(target, img.objectId);
             const resized = await resizeForModel(data);
             if (resized) content.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
           } catch {
@@ -1519,6 +1565,25 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const listSpaces = defineTool({
+    name: "anytype_list_spaces",
+    label: "List Anytype spaces",
+    description:
+      "List every Anytype space this assistant has joined (id + name). Use a returned id/name as the `space` argument of anytype_list_objects / anytype_search / anytype_read_object to read from that space.",
+    promptSnippet: "anytype_list_spaces — list all joined spaces (id + name)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const spaces = await api.listSpaces();
+        if (spaces.length === 0) return textResult("No spaces.");
+        return textResult(spaces.map((s) => `${s.name || "(unnamed)"} — ${s.id}`).join("\n"));
+      } catch (err) {
+        return textResult(`anytype_list_spaces failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1552,6 +1617,9 @@ export function createAnytypeTools(deps: {
     webSearchTool,
     webFetchTool,
   ] as ToolDefinition[];
+
+  // Cross-space read tools are only for the global console session.
+  if (consoleDep) tools.push(listSpaces);
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so
   // they cannot spawn further sub-agents (no recursion).
