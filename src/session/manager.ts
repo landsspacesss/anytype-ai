@@ -7,7 +7,9 @@ import type { ApprovalMode } from "../agent/approval.js";
  */
 export type AgentProgress =
   | { kind: "thinking" }
-  | { kind: "tool"; tool: string; args?: unknown };
+  | { kind: "tool"; tool: string; args?: unknown }
+  /** The model's prose emitted just before a tool call (transient "narration"). */
+  | { kind: "narration"; text: string };
 
 /** Callback invoked as the turn's phase changes (thinking ↔ a tool call). */
 export type ProgressCallback = (p: AgentProgress) => void;

@@ -9,7 +9,7 @@ import {
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
-import { CONSOLE_TOOLS, effectiveToolNames, buildSessionResourceLoader } from "../src/agent/pi-session.js";
+import { CONSOLE_TOOLS, effectiveToolNames, buildSessionResourceLoader, TextSegmenter } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
@@ -139,6 +139,29 @@ describe("effectiveToolNames — console lock", () => {
     expect(names).toContain("anytype_list_spaces");
     expect(names).toContain("anytype_run_in_space");
     expect(names).not.toContain("anytype_create_note");
+  });
+});
+
+describe("TextSegmenter", () => {
+  it("narration() returns the text accumulated since the last take, trimmed", () => {
+    const s = new TextSegmenter();
+    s.push("我先 ");
+    s.push("查一下。");
+    expect(s.narration()).toBe("我先 查一下。");
+    expect(s.narration()).toBeNull(); // buffer cleared
+  });
+
+  it("answer() returns the remaining text (end of turn)", () => {
+    const s = new TextSegmenter();
+    s.push("旁白"); expect(s.narration()).toBe("旁白");
+    s.push("这是答案");
+    expect(s.answer()).toBe("这是答案");
+  });
+
+  it("blank narration is null (tool call with no preceding text)", () => {
+    const s = new TextSegmenter();
+    s.push("   \n ");
+    expect(s.narration()).toBeNull();
   });
 });
 

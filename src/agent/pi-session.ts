@@ -171,6 +171,32 @@ export function decideInterrupt(
   return "abort-now";
 }
 
+/**
+ * Segments the assistant's streamed text: each contiguous run of text is either
+ * a "narration" (emitted just before a tool call) or the final answer (the text
+ * remaining at the end of the turn). The buffer is consumed on each read.
+ */
+export class TextSegmenter {
+  private buf = "";
+  push(delta: string): void {
+    this.buf += delta;
+  }
+  private take(): string {
+    const t = this.buf.trim();
+    this.buf = "";
+    return t;
+  }
+  /** Text since the last read, trimmed — null when blank (nothing said before the tool). */
+  narration(): string | null {
+    const t = this.take();
+    return t.length > 0 ? t : null;
+  }
+  /** Text remaining at end of turn — this is the reply. */
+  answer(): string {
+    return this.take();
+  }
+}
+
 /** Where the baked-in custom model registry lives in the image. */
 const MODELS_SRC = "/app/pi/models.json";
 
@@ -253,8 +279,8 @@ export async function buildSessionResourceLoader(opts: {
  *
  * Replaces the old omp subprocess: no RPC framing, no `ready` handshake, and
  * no child process to supervise. `session.prompt()` resolves when the turn
- * completes, at which point `collected` holds the assistant's reply text that
- * we accumulated from `text_delta` streaming events.
+ * completes, at which point the segmenter holds the assistant's reply text that
+ * we accumulated from `text_delta` streaming events (narration flushed per tool).
  */
 export async function createPiClient(opts: PiClientOptions): Promise<ManagedClient> {
   const authStorage = AuthStorage.create();
@@ -430,7 +456,8 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     ...(model ? { model: model as never } : {}),
   });
 
-  let collected = "";
+  // Splits streamed text into per-tool "narrations" and the final answer.
+  let segmenter = new TextSegmenter();
   // Set for the duration of the current top-level prompt(); lets the session
   // event handler forward tool-call starts to the caller's progress callback.
   // Sub-agents/child sessions never set this, so they are unaffected.
@@ -455,14 +482,17 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     if (e.type === "message_update") {
       const ev = e.assistantMessageEvent;
       if (ev?.type === "text_delta") {
-        // Always collect reply text, regardless of any progress listener.
-        collected += ev.delta;
+        // Always capture streamed text, regardless of any progress listener.
+        segmenter.push(ev.delta);
       } else if (ev?.type === "thinking_start") {
         // The model is reasoning (between/around tool calls).
         currentProgress?.({ kind: "thinking" });
       }
     } else if (e.type === "tool_execution_start") {
       if (typeof e.toolName === "string") {
+        // Flush whatever prose preceded this tool call as a transient narration.
+        const narr = segmenter.narration();
+        if (narr) currentProgress?.({ kind: "narration", text: narr });
         currentTool = { name: e.toolName, interruptible: isInterruptibleTool(e.toolName) };
         currentProgress?.({ kind: "tool", tool: e.toolName, args: e.args });
       }
@@ -502,14 +532,14 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     },
     async prompt(m: string, onProgress?: ProgressCallback): Promise<string> {
       opts.approvalGate?.resetTurn(); // forget any "approve all" from the last turn
-      collected = "";
+      segmenter = new TextSegmenter();
       currentProgress = onProgress;
       turnAborted = false;
       pendingInterrupt = false;
       try {
         await session.prompt(m);
         // A turn that was interrupted yields partial text — drop it.
-        return turnAborted ? "" : collected;
+        return turnAborted ? "" : segmenter.answer();
       } finally {
         currentProgress = undefined;
       }

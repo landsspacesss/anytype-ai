@@ -26,9 +26,13 @@ export function formatToolProgress(tool: string, args: unknown): string {
   return hint ? `⏳ 正在 ${tool}(${hint})…` : `⏳ 正在 ${tool}…`;
 }
 
-/** Format one progress notification: thinking → 🧠, a tool call → ⏳. */
+/**
+ * Format one progress notification: thinking → 🧠, a tool call → ⏳, and a
+ * transient narration → the prose itself (the model's pre-tool sentence).
+ */
 export function formatProgress(p: AgentProgress): string {
   if (p.kind === "thinking") return STATUS_THINKING;
+  if (p.kind === "narration") return p.text;
   return formatToolProgress(p.tool, p.args);
 }
 
