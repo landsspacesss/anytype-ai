@@ -16,6 +16,8 @@ export interface NormalizedEvent {
   objectId?: string;
   /** Extra context prepended to the agent prompt (e.g. "you are in page X's discussion"). */
   contextNote?: string;
+  /** Files/images attached to the message (their object ids + kind). */
+  attachments?: Array<{ id: string; type: string }>;
 }
 
 export interface ChatRow {

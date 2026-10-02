@@ -13,7 +13,8 @@ export function normalizeMessage(raw: unknown, ctx: NormalizeCtx): NormalizedEve
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || typeof r.author_id !== "string") return null;
   const text = typeof r.text === "string" ? r.text : "";
-  return {
+  const attachments = parseAttachments(r.attachments);
+  const event: NormalizedEvent = {
     spaceId: ctx.spaceId,
     chatId: ctx.chatId,
     messageId: r.id,
@@ -24,6 +25,22 @@ export function normalizeMessage(raw: unknown, ctx: NormalizeCtx): NormalizedEve
     isDirect: ctx.isDirect,
     objectId: ctx.objectId,
   };
+  if (attachments.length > 0) event.attachments = attachments;
+  return event;
+}
+
+/** Message attachments (`[{id, type}]`), skipping malformed entries. */
+function parseAttachments(raw: unknown): Array<{ id: string; type: string }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ id: string; type: string }> = [];
+  for (const a of raw) {
+    if (a === null || typeof a !== "object") continue;
+    const rec = a as Record<string, unknown>;
+    if (typeof rec.id === "string" && rec.id.length > 0) {
+      out.push({ id: rec.id, type: typeof rec.type === "string" ? rec.type : "file" });
+    }
+  }
+  return out;
 }
 
 export function hasMentionOf(text: string, participantId: string): boolean {

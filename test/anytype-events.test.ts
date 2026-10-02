@@ -26,6 +26,32 @@ describe("normalizeMessage", () => {
     expect(e?.chatId).toBe("c1");
   });
 
+  it("extracts message attachments (id + type), skipping malformed entries", () => {
+    const raw = {
+      id: "m-att",
+      author_id: "u1",
+      text: "看下附件",
+      attachments: [
+        { id: "file-1", type: "file" },
+        { id: "img-2", type: "image" },
+        { type: "file" }, // malformed → skipped
+      ],
+    };
+    const e = normalizeMessage(raw, { spaceId: "s", chatId: "c", botParticipantId: "bot", isDirect: true });
+    expect(e?.attachments).toEqual([
+      { id: "file-1", type: "file" },
+      { id: "img-2", type: "image" },
+    ]);
+  });
+
+  it("omits attachments when there are none", () => {
+    const e = normalizeMessage(
+      { id: "m", author_id: "u", text: "hi" },
+      { spaceId: "s", chatId: "c", botParticipantId: "b", isDirect: true },
+    );
+    expect(e?.attachments).toBeUndefined();
+  });
+
   it("marks a bot-authored message as bot self", () => {
     const raw = { id: "m2", author_id: "bot1", text: "ok" };
     const e = normalizeMessage(raw, {

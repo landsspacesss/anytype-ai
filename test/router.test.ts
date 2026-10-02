@@ -34,6 +34,29 @@ describe("Router", () => {
     expect(run).toHaveBeenCalledWith("s", "c", "（你正在页面「X」的讨论区）\n\n讲了什么");
   });
 
+  it("tells the agent about message attachments", async () => {
+    const run = vi.fn(async () => "ok");
+    const send = vi.fn(async () => {});
+    const r = new Router({ botName: "ai", run, send });
+    await r.handle(
+      ev({
+        mentionsBot: true,
+        text: "@ai 看下",
+        attachments: [
+          { id: "file-1", type: "file" },
+          { id: "img-2", type: "image" },
+        ],
+      }),
+    );
+    const prompt = run.mock.calls[0][2] as string;
+    expect(prompt).toContain("附带了 2 个文件");
+    expect(prompt).toContain("id=file-1");
+    expect(prompt).toContain("id=img-2");
+    expect(prompt).toContain("anytype_read_object"); // how to read images
+    expect(prompt).toContain("anytype_download_file"); // how to read files
+    expect(prompt).toContain("看下"); // the user's text is still there
+  });
+
   it("sends an error message when the agent fails", async () => {
     const run = vi.fn(async () => { throw new Error("boom"); });
     const send = vi.fn(async () => {});
