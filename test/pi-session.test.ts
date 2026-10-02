@@ -105,20 +105,23 @@ describe("CONSOLE_TOOLS", () => {
   });
 });
 
-describe("effectiveToolNames", () => {
-  it("console is read-only even with autoTools ON", () => {
-    const names = effectiveToolNames({ isConsole: true, autoTools: true, allToolNames: ["anytype_create_note", "read"] });
+describe("effectiveToolNames (3 modes)", () => {
+  const all = ["read", "bash", "anytype_create_note", "subagent", "agent"];
+  it("auto: all tools", () => {
+    expect(effectiveToolNames({ isConsole: false, mode: "auto", allToolNames: all })).toEqual(all);
+  });
+  it("ask: all tools (the gate blocks, not the tool set)", () => {
+    expect(effectiveToolNames({ isConsole: false, mode: "ask", allToolNames: all })).toEqual(all);
+  });
+  it("readonly: safe tools + subagents, no writers", () => {
+    const names = effectiveToolNames({ isConsole: false, mode: "readonly", allToolNames: all });
     expect(names).toContain("read");
-    expect(names).toContain("anytype_memories");
+    expect(names).toContain("subagent");
+    expect(names).toContain("agent");
+    expect(names).not.toContain("bash");
     expect(names).not.toContain("anytype_create_note");
   });
-  it("non-console with autoTools ON gets all tools", () => {
-    expect(effectiveToolNames({ isConsole: false, autoTools: true, allToolNames: ["anytype_create_note"] }))
-      .toEqual(["anytype_create_note"]);
-  });
-  it("non-console with autoTools OFF gets the read-only set", () => {
-    const names = effectiveToolNames({ isConsole: false, autoTools: false, allToolNames: ["anytype_create_note"] });
-    expect(names).toContain("anytype_search");
-    expect(names).not.toContain("anytype_create_note");
+  it("console stays read-only regardless of mode", () => {
+    expect(effectiveToolNames({ isConsole: true, mode: "auto", allToolNames: all })).toEqual([...CONSOLE_TOOLS]);
   });
 });

@@ -1,11 +1,14 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   AuthStorage,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   createAgentSession,
 } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { InterruptPolicy, ManagedClient, ProgressCallback } from "../session/manager.js";
 import { DEFAULT_INTERRUPT_POLICY } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
@@ -14,6 +17,7 @@ import { DEFAULT_WATCH_CRON } from "../watch/store.js";
 import { createAnytypeTools } from "./anytype-tools.js";
 import { SubagentRegistry } from "./subagents.js";
 import type { ChildAgent } from "./subagents.js";
+import { SAFE_TOOLS, needsApproval, type ApprovalMode, type ApprovalGate } from "./approval.js";
 
 export interface PiClientOptions {
   /** Working directory for the agent (its project-local context lives here). */
@@ -73,23 +77,14 @@ export interface PiClientOptions {
     workspaceRoot: string;
     joinSpace?: (link: string) => Promise<{ ok: boolean; message: string }>;
   };
+  /** Initial approval mode for this session. Default "auto". */
+  approvalMode?: ApprovalMode;
+  /** Approval gate shared with the tool-call hook (ask mode). */
+  approvalGate?: ApprovalGate;
 }
 
-/** Tool names kept when YOLO / auto-approve mode is OFF (read-only safety set). */
-export const READONLY_TOOLS: readonly string[] = [
-  "anytype_list_objects",
-  "anytype_search",
-  "anytype_read_object",
-  "anytype_download_images",
-  "anytype_download_file",
-  "crop_image",
-  "anytype_list_properties",
-  "anytype_list_types",
-  "anytype_templates",
-  "web_search",
-  "web_fetch",
-  "anytype_watch",
-];
+/** @deprecated use SAFE_TOOLS. Kept as an alias for backwards compatibility. */
+export const READONLY_TOOLS: readonly string[] = [...SAFE_TOOLS];
 
 /**
  * Tool set for the CONSOLE session: read-only reads plus the global tools.
@@ -114,14 +109,19 @@ export const CONSOLE_TOOLS: readonly string[] = [
   "web_fetch",
 ];
 
-/** Effective tool names for a session. Console is ALWAYS read-only (YOLO cannot widen it). */
+/** Effective tool names for a session.
+ *  - console → always read-only (CONSOLE_TOOLS)
+ *  - auto / ask → all tools (ask blocks via the gate, not the tool set)
+ *  - readonly → safe tools + subagents (children inherit safe-only)
+ */
 export function effectiveToolNames(o: {
   isConsole: boolean;
-  autoTools: boolean;
+  mode: ApprovalMode;
   allToolNames: string[];
 }): string[] {
   if (o.isConsole) return [...CONSOLE_TOOLS];
-  return o.autoTools ? [...o.allToolNames] : [...READONLY_TOOLS];
+  if (o.mode === "readonly") return [...SAFE_TOOLS, "subagent", "agent"];
+  return [...o.allToolNames];
 }
 
 /**
@@ -231,6 +231,11 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       }),
       ...(model ? { model: model as never } : {}),
     });
+    // Children inherit the parent's read-only restriction: they have no
+    // subagent/agent tool, so the safe set alone makes them read-only too.
+    if (approvalMode === "readonly") {
+      child.setActiveToolsByName([...SAFE_TOOLS]);
+    }
     let collected = "";
     const unsub = child.subscribe((e) => {
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
@@ -287,12 +292,34 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     sessionManager = SessionManager.inMemory(opts.cwd);
   }
 
+  // Top-level tool-call gate. Only `ask` mode gates (auto/readonly never
+  // block here); sub-agents are refused outright in ask mode so they cannot
+  // bypass the approval.
+  const approvalExtension = (pi: ExtensionAPI): void => {
+    pi.on("tool_call", async (event, ctx) => {
+      if (approvalMode !== "ask") return;              // auto/readonly → no gate
+      const tool = event.toolName;
+      if (!needsApproval(tool) && tool !== "subagent" && tool !== "agent") return; // safe → allow
+      if (tool === "subagent" || tool === "agent") {
+        return { block: true, reason: "ask 模式不支持子代理（会绕过批准）。用 /yolo auto，或直接在会话里做。" };
+      }
+      if (!opts.approvalGate) return;                  // no gate wired → allow
+      const ok = await opts.approvalGate.request(tool, event.input, ctx.signal);
+      return ok ? undefined : { block: true, reason: "用户未批准该操作。" };
+    });
+  };
+
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     agentDir: opts.agentDir,
     authStorage,
     modelRegistry,
     sessionManager,
+    resourceLoader: new DefaultResourceLoader({
+      cwd: opts.cwd,
+      agentDir: opts.agentDir ?? path.join(os.homedir(), ".pi", "agent"),
+      extensionFactories: [approvalExtension],
+    }),
     customTools: createAnytypeTools({
       api: opts.api,
       spaceId: opts.spaceId,
@@ -370,20 +397,18 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     }
   });
 
-  // YOLO / auto-approve: ON means every tool is active. OFF restricts to a
-  // read-only safety set (no create/update/delete/edit/chat-send/upload/
-  // subagent/agent). Default ON.
-  let autoTools = true;
+  // Approval mode drives the tool set (readonly) and the gate (ask).
+  let approvalMode: ApprovalMode = opts.approvalMode ?? "auto";
   const applyTools = (): void => {
     session.setActiveToolsByName(
       effectiveToolNames({
         isConsole: opts.isConsole === true,
-        autoTools,
+        mode: approvalMode,
         allToolNames: session.getAllTools().map((t) => t.name),
       }),
     );
   };
-  // Establish the default (all tools) explicitly, so the agent's active set
+  // Establish the default tool set explicitly, so the agent's active set
   // matches our model of it from the first turn.
   applyTools();
 
@@ -392,6 +417,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       return session.isStreaming;
     },
     async prompt(m: string, onProgress?: ProgressCallback): Promise<string> {
+      opts.approvalGate?.resetTurn(); // forget any "approve all" from the last turn
       collected = "";
       currentProgress = onProgress;
       turnAborted = false;
@@ -441,14 +467,26 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       const before = typeof r.tokensBefore === "number" ? `（压缩前 ${r.tokensBefore} tokens）` : "";
       return `已压缩当前对话${before}`;
     },
+    setApprovalMode(m: ApprovalMode): ApprovalMode {
+      if (opts.isConsole) return approvalMode; // console is always read-only
+      approvalMode = m;
+      applyTools();
+      return approvalMode;
+    },
+    getApprovalMode(): ApprovalMode {
+      return opts.isConsole ? "readonly" : approvalMode;
+    },
+    approvePending(kind: "approve" | "all" | "deny"): boolean {
+      return opts.approvalGate?.resolve(kind) ?? false;
+    },
     setAutoTools(enabled: boolean): string {
       if (opts.isConsole) return "控制台始终只读（/yolo 在此无效）";
-      autoTools = enabled;
+      approvalMode = enabled ? "auto" : "ask";
       applyTools();
-      return enabled ? "YOLO 自动模式：开" : "YOLO 自动模式：关";
+      return enabled ? "YOLO 自动模式：开" : "已切到 ask 模式（每次写操作都需批准）";
     },
     isAutoTools(): boolean {
-      return autoTools;
+      return approvalMode === "auto";
     },
     setInterruptPolicy(p: InterruptPolicy): void {
       interruptPolicy = p;

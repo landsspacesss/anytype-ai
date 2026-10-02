@@ -1,3 +1,5 @@
+import type { ApprovalMode } from "../agent/approval.js";
+
 /**
  * A progress notification during an agent turn: either the model is thinking
  * (reasoning between tool calls) or a tool is executing. `args` is the raw
@@ -46,6 +48,12 @@ export interface ManagedClient {
   setAutoTools?(enabled: boolean): string;
   /** Whether YOLO / auto-approve mode is on. */
   isAutoTools?(): boolean;
+  /** Set the approval mode; returns the mode actually applied. */
+  setApprovalMode?(mode: ApprovalMode): ApprovalMode;
+  /** Current approval mode (a console session always reports "readonly"). */
+  getApprovalMode?(): ApprovalMode;
+  /** Resolve a pending approval request. Returns true if one was pending. */
+  approvePending?(kind: "approve" | "all" | "deny"): boolean;
   /** Set how this chat's in-flight turn reacts to a newer message. */
   setInterruptPolicy?(policy: InterruptPolicy): void;
   /** Current interrupt policy. */
