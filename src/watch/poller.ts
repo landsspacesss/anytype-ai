@@ -1,5 +1,4 @@
 import type { AnytypeClient } from "../anytype/client.js";
-import { AnytypeApiError } from "../anytype/client.js";
 import type { BlockSnap, WatchRecord } from "./store.js";
 import { WatchStore, diffSnapshots, snapshotOf } from "./store.js";
 
@@ -70,24 +69,31 @@ export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void>
     try {
       doc = await deps.api.getObjectRaw(rec.spaceId, rec.objectId);
     } catch (err) {
-      // Distinguish "really deleted" (404) from a transient blip (network/5xx).
-      // Only a 404 counts as a miss; and only after `maxMisses` consecutive
-      // misses do we unsubscribe — so a flaky read never drops a watch.
-      const notFound = err instanceof AnytypeApiError && err.status === 404;
-      if (!notFound) {
-        console.warn(`pollWatch: watch ${rec.objectId} transient error, keeping: ${String(err)}`);
-        return;
+      // The read failed. Don't assume it's deleted — confirm via the object
+      // list first (a soft-deleted object still reads 200, so absence from the
+      // list is the real "gone" signal). A transient network/5xx failure leaves
+      // the object present, so we keep the watch. Only N consecutive confirmed
+      // absences drop it.
+      let present: boolean | undefined;
+      try {
+        present = (await deps.api.listObjects(rec.spaceId)).some((o) => o.id === rec.objectId);
+      } catch {
+        present = undefined; // couldn't confirm → treat as transient, keep
       }
-      rec.misses = (rec.misses ?? 0) + 1;
-      if (rec.misses >= (deps.maxMisses ?? DEFAULT_MAX_MISSES)) {
-        try {
-          await deps.notify(rec, `订阅的对象『${rec.label}』已不存在（连续 ${rec.misses} 次找不到），已取消订阅`);
-        } catch {
-          // Notification failure must not stop the removal.
+      if (present === false) {
+        rec.misses = (rec.misses ?? 0) + 1;
+        if (rec.misses >= (deps.maxMisses ?? DEFAULT_MAX_MISSES)) {
+          try {
+            await deps.notify(rec, `订阅的对象『${rec.label}』已不存在（连续 ${rec.misses} 次找不到），已取消订阅`);
+          } catch {
+            // Notification failure must not stop the removal.
+          }
+          deps.store.remove(rec.spaceId, rec.objectId);
         }
-        deps.store.remove(rec.spaceId, rec.objectId);
+        deps.store.save();
+      } else {
+        console.warn(`pollWatch: watch ${rec.objectId} read failed but present=${present}; keeping: ${String(err)}`);
       }
-      deps.store.save();
       return;
     }
 

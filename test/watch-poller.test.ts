@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { WatchStore, type WatchRecord } from "../src/watch/store.js";
 import { pollWatch, pollWatches, summarizeChange } from "../src/watch/poller.js";
-import { AnytypeApiError, type AnytypeClient } from "../src/anytype/client.js";
+import type { AnytypeClient } from "../src/anytype/client.js";
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "watch-poll-")), "watches.json");
@@ -99,12 +99,13 @@ describe("pollWatches", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT unsubscribe on a transient (non-404) fetch failure", async () => {
+  it("does NOT unsubscribe when a read fails but the object is still listed", async () => {
     const store = seededStore([{ id: "b1", text: "hello" }]);
     const api = {
       getObjectRaw: vi.fn(async () => {
-        throw new Error("fetch failed: ECONNRESET");
+        throw new Error("fetch failed: ECONNRESET"); // transient blip
       }),
+      listObjects: vi.fn(async () => [{ id: "obj1", name: "Note 1", type: "page" }]), // still present
     } as unknown as AnytypeClient;
     const notify = vi.fn(async () => {});
 
@@ -114,12 +115,13 @@ describe("pollWatches", () => {
     expect(store.get("sp1", "obj1")).toBeDefined(); // kept
   });
 
-  it("keeps the watch until maxMisses consecutive 404s, then unsubscribes", async () => {
+  it("probes the list when a read fails, and unsubscribes only after N confirmed absences", async () => {
     const store = seededStore([{ id: "b1", text: "hello" }]);
     const api = {
       getObjectRaw: vi.fn(async () => {
-        throw new AnytypeApiError(404, "getObjectRaw");
+        throw new Error("read failed");
       }),
+      listObjects: vi.fn(async () => []), // absent → confirms deletion
     } as unknown as AnytypeClient;
     const notify = vi.fn(async () => {});
 
@@ -129,9 +131,26 @@ describe("pollWatches", () => {
     expect(notify).not.toHaveBeenCalled();
 
     await pollWatch(store.get("sp1", "obj1")!, { store, api, notify, maxMisses: 3 });
-    expect(store.get("sp1", "obj1")).toBeUndefined(); // 3rd miss — dropped
+    expect(store.get("sp1", "obj1")).toBeUndefined(); // 3rd confirmed absence — dropped
     expect(notify).toHaveBeenCalledTimes(1);
     expect((notify.mock.calls[0] as unknown as [WatchRecord, string])[1]).toContain("已不存在");
+  });
+
+  it("does not unsubscribe when neither the read nor the list can confirm absence", async () => {
+    const store = seededStore([{ id: "b1", text: "hello" }]);
+    const api = {
+      getObjectRaw: vi.fn(async () => {
+        throw new Error("read failed");
+      }),
+      listObjects: vi.fn(async () => {
+        throw new Error("list also failed");
+      }),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatches({ store, api, notify });
+    expect(notify).not.toHaveBeenCalled();
+    expect(store.get("sp1", "obj1")).toBeDefined(); // can't confirm → keep
   });
 
   it("resets the miss counter when the object is readable again", async () => {
@@ -139,9 +158,10 @@ describe("pollWatches", () => {
     let fail = true;
     const api = {
       getObjectRaw: vi.fn(async () => {
-        if (fail) throw new AnytypeApiError(404, "getObjectRaw");
+        if (fail) throw new Error("read failed");
         return docWith({ b1: "hello" }); // unchanged content
       }),
+      listObjects: vi.fn(async () => []), // absent while failing
     } as unknown as AnytypeClient;
     const notify = vi.fn(async () => {});
 
