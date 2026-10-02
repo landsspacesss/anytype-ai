@@ -645,13 +645,41 @@ export const CONSOLE_TOOLS: readonly string[] = [
 ];
 ```
 
-- `applyTools` 改为按 `isConsole` 选集合：
+- `applyTools` 改为按 `isConsole` 选集合。**控制台无条件只读**（与 YOLO 开关无关）——抽一个纯函数以便单测：
+
+```ts
+/** Effective tool names for a session. Console is ALWAYS read-only (YOLO cannot widen it). */
+export function effectiveToolNames(o: {
+  isConsole: boolean;
+  autoTools: boolean;
+  allToolNames: string[];
+}): string[] {
+  if (o.isConsole) return [...CONSOLE_TOOLS];
+  return o.autoTools ? [...o.allToolNames] : [...READONLY_TOOLS];
+}
+```
 
 ```ts
   const applyTools = (): void => {
-    const names = autoTools ? session.getAllTools().map((t) => t.name) : [...(opts.isConsole ? CONSOLE_TOOLS : READONLY_TOOLS)];
-    session.setActiveToolsByName(names);
+    session.setActiveToolsByName(
+      effectiveToolNames({
+        isConsole: opts.isConsole === true,
+        autoTools,
+        allToolNames: session.getAllTools().map((t) => t.name),
+      }),
+    );
   };
+```
+
+- `setAutoTools`（`/yolo`）在控制台会话里**不改变工具集**，只回报"控制台始终只读":
+
+```ts
+    setAutoTools(enabled: boolean): string {
+      if (opts.isConsole) return "控制台始终只读（/yolo 在此无效）";
+      autoTools = enabled;
+      applyTools();
+      return enabled ? "YOLO 自动模式：开" : "YOLO 自动模式：关";
+    },
 ```
 
 - 顶层会话创建时，把 `console` dep 传下去（**仅当 `opts.isConsole`**），并在 cwd 上不额外处理（cwd 由 main 传 `_global`）：
@@ -958,8 +986,9 @@ message WorkspaceCreateRequest {
 }
 message WorkspaceCreateResponse { Error error = 1; string spaceId = 2; }
 
-// NOTE: field numbers below must match anytype-heart's Rpc.Space.Join.Request (verified in Step 1).
-message SpaceJoinRequest { string networkId = 1; string spaceId = 2; string inviteCid = 3; string inviteKey = 4; }
+// Field numbers VERIFIED against anytype-heart pb/protos/commands.proto:
+//   Rpc.Space.Join.Request { networkId=1; spaceId=2; inviteCid=3; inviteFileKey=4; }
+message SpaceJoinRequest { string networkId = 1; string spaceId = 2; string inviteCid = 3; string inviteFileKey = 4; }
 message SpaceJoinResponse { Error error = 1; }
 ```
 
@@ -1083,7 +1112,7 @@ export class HeartGrpc {
   async spaceJoin(args: { cid: string; key: string; networkId?: string }): Promise<void> {
     const res = await this.call("SpaceJoin", {
       inviteCid: args.cid,
-      inviteKey: args.key,
+      inviteFileKey: args.key,
       ...(args.networkId ? { networkId: args.networkId } : {}),
     });
     const e = this.errText(res);
