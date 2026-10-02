@@ -183,6 +183,8 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 
 **触发规则**：被 `@anytype-bot` 时回复；**私聊**（成员 ≤2 的聊天）里每条都回；bot 自己的消息永不触发。
 
+**消息附件**：聊天消息带的文件/图片（`attachments`）会**一并告诉 agent**（附上每个的 id 和类型）。它能：**图片**用 `anytype_read_object` 直接看；**其他文件**用 `anytype_download_file` 下载后再用 shell 工具解析。⚠️ 群聊里带附件的消息仍需 **@bot** 才触发（跟普通消息同一规则）。
+
 ### 聊天指令（消息以 `/` 开头）
 
 | 指令 | 作用 |
