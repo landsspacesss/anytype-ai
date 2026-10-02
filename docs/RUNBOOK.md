@@ -119,6 +119,14 @@ DEEPSEEK_API_KEY=sk-...      # 当前用的
 
 **作用域**：工作区目录按 **space** 分（`/workspace/<spaceId>/`），所以**同一空间里的多个聊天共享同一份记忆**——在聊天 A 说"记住X"，聊天 B 也能读到。但**对话上下文是按聊天隔离**的（每个聊天一条独立对话线，互不串）。
 
+### 笔记的讨论（Discussion）
+
+每篇笔记/对象下面有一个**讨论**，它本身也是一个聊天（有自己的 chat id）。bot 会自动订阅它们——所以你可以**在笔记的讨论里 @anytype-bot**，它会读那篇笔记的上下文并回复。
+
+- **上下文**：每篇笔记的讨论是**独立对话线**（按各自的 chat id）。
+- **记忆**：与同空间其他聊天/讨论**共享**。
+- 讨论**不在** `listChats` 里返回——bot 是从对象列表里读出每个对象的 `discussion` id 来订阅的（见 `src/anytype/discussion.ts`）。
+
 查看某空间的记忆：
 ```bash
 docker exec anytype-ai-bot-1 cat /workspace/pqdthe/MEMORY.md
