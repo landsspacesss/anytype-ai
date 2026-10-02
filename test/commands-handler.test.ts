@@ -14,6 +14,7 @@ function fakeClient(overrides: Partial<ManagedClient> = {}) {
     compact: vi.fn(async () => "已压缩（压缩前 123 tokens）"),
     setModel: vi.fn(async (id: string) => (id === "nope" ? null : id)),
     getModel: vi.fn(() => "deepseek-flash"),
+    getAvailableModels: vi.fn(() => ["deepseek/deepseek-flash", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]),
     setThinkingLevel: vi.fn((level: string) => (level === "max" ? "xhigh" : level)),
     getThinkingLevel: vi.fn(() => "medium"),
     // Mirror DeepSeek V4: only off/high/max exist.
@@ -96,11 +97,13 @@ describe("handleCommand", () => {
     expect(reply).toContain("已压缩当前对话");
   });
 
-  it("/model with no arg reports the current model", async () => {
+  it("/model with no arg reports the current model AND the usable model list", async () => {
     const c = fakeClient();
     const { context, ensure } = ctx(c);
     const reply = await handleCommand("model", "", context);
     expect(reply).toContain("deepseek-flash");
+    expect(reply).toContain("可用模型");
+    expect(reply).toContain("deepseek: deepseek-flash, deepseek-v4-flash, deepseek-v4-pro");
     expect(ensure).not.toHaveBeenCalled();
   });
 
@@ -118,6 +121,7 @@ describe("handleCommand", () => {
     const reply = await handleCommand("model", "nope", context);
     expect(c.setModel).toHaveBeenCalledWith("nope");
     expect(reply).toMatch(/未知模型/);
+    expect(reply).toContain("可用模型"); // unknown → suggest the real ids
   });
 
   it("/effort with no arg reports the current level and the model's levels", async () => {

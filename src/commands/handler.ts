@@ -43,6 +43,26 @@ export interface CommandContext {
 /** Thinking levels `/effort` accepts (pi clamps to what the model supports). */
 const EFFORT_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
+/**
+ * Render the models the bot can actually switch to (those whose provider has a
+ * configured key). Input entries are `provider/id`. Long lists are capped.
+ */
+export function availableModelsText(models: string[]): string {
+  if (models.length === 0) return "";
+  const byProvider = new Map<string, string[]>();
+  for (const m of models) {
+    const slash = m.indexOf("/");
+    const prov = slash === -1 ? "" : m.slice(0, slash);
+    const id = slash === -1 ? m : m.slice(slash + 1);
+    (byProvider.get(prov) ?? byProvider.set(prov, []).get(prov)!).push(id);
+  }
+  const parts: string[] = [];
+  for (const [prov, ids] of byProvider) parts.push(`${prov}: ${ids.join(", ")}`);
+  let text = parts.join("；");
+  if (text.length > 400) text = text.slice(0, 400) + "…";
+  return `（可用模型 — ${text}）`;
+}
+
 /** Human-readable label for an interrupt policy. */
 export function interruptLabel(p: InterruptPolicy): string {
   return p === "immediate" ? "立刻打断" : "等这一步结束";
@@ -95,17 +115,18 @@ export async function handleCommand(
     }
 
     case "model": {
+      const live = ctx.getClient();
+      const availText = availableModelsText(live?.getAvailableModels?.() ?? []);
       if (!args) {
-        const client = ctx.getClient();
-        const current = client?.getModel?.() ?? ctx.defaultModel;
-        return `当前模型：${current}`;
+        const current = live?.getModel?.() ?? ctx.defaultModel;
+        return `当前模型：${current}${availText}`;
       }
       const client = await ctx.ensureClient();
       if (!client.setModel) return "当前会话不支持切换模型。";
       const resolved = await client.setModel(args);
       return resolved
         ? `已切换模型：${resolved}`
-        : `未知模型：${args}（未改动，当前仍是 ${client.getModel?.() ?? ctx.defaultModel}）`;
+        : `未知模型：${args}（未改动，当前仍是 ${client.getModel?.() ?? ctx.defaultModel}）${availText}`;
     }
 
     case "effort": {

@@ -526,6 +526,20 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     getModel(): string {
       return session.model?.id ?? "(pi default)";
     },
+    getAvailableModels(): string[] {
+      // Only providers with a configured key are actually usable. Return
+      // `provider/id` so ids that repeat across providers stay unambiguous.
+      const registry = modelRegistry as unknown as {
+        getAll?: () => Array<{ id: string; provider?: string }>;
+        hasConfiguredAuth?: (m: unknown) => boolean;
+      };
+      const all = registry.getAll?.() ?? [];
+      const has = registry.hasConfiguredAuth?.bind(registry);
+      return all
+        .filter((m) => (has ? has(m) : true))
+        .map((m) => `${m.provider ?? "?"}/${m.id}`)
+        .sort();
+    },
     async setModel(id: string): Promise<string | null> {
       const model = resolveModel(modelRegistry, id);
       if (!model) return null;

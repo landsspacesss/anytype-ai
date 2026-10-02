@@ -38,6 +38,8 @@ export interface ManagedClient {
   setModel?(id: string): Promise<string | null>;
   /** Current model id (or a placeholder when unset). */
   getModel?(): string;
+  /** Model ids this bot can actually switch to (`provider/id`) — providers with a configured key. */
+  getAvailableModels?(): string[];
   /** Set the thinking level; returns the level actually applied. */
   setThinkingLevel?(level: string): string;
   /** Current thinking level. */
