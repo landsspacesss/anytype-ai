@@ -59,60 +59,78 @@ async function main(): Promise<void> {
     void router.handle(e);
   };
 
-  // Discover spaces -> chats and subscribe to each chat's SSE stream.
   // Captured ONCE before any subscription: the stream replays recent history as
   // `message_added` on connect, and any message older than this start instant is
   // backlog we must not answer. One shared timestamp keeps every subscription
   // consistent regardless of discovery order.
   const startedAt = new Date().toISOString();
-  const spaces = await api.listSpaces();
-  let subscriptions = 0;
-  for (const space of spaces) {
-    const members = await api.listMembers(space.id).catch((err) => {
-      console.warn(`listMembers failed for space ${space.id}: ${String(err)}`);
-      return [];
-    });
+  const subscribed = new Set<string>(); // chat ids already subscribed
 
-    // The bot's participant id is space-scoped; resolve it from this space's
-    // member list by identity, falling back to the configured constant.
-    let botParticipantId = cfg.botParticipantId;
-    if (cfg.botIdentity) {
-      const resolved = resolveBotParticipantId(members, cfg.botIdentity);
-      if (!resolved) {
-        console.warn(`bot identity not found in space ${space.id}; skipping`);
-        continue;
+  // Discover spaces -> chats and subscribe to any chat not yet subscribed.
+  // Runs at startup AND periodically, so chats created after boot are picked up
+  // without a restart. Overlapping runs are skipped.
+  let discovering = false;
+  async function discover(): Promise<void> {
+    if (discovering) return;
+    discovering = true;
+    try {
+      const spaces = await api.listSpaces();
+      for (const space of spaces) {
+        const members = await api.listMembers(space.id).catch((err) => {
+          console.warn(`listMembers failed for space ${space.id}: ${String(err)}`);
+          return [];
+        });
+
+        // The bot's participant id is space-scoped; resolve it from this space's
+        // member list by identity, falling back to the configured constant.
+        let botParticipantId = cfg.botParticipantId;
+        if (cfg.botIdentity) {
+          const resolved = resolveBotParticipantId(members, cfg.botIdentity);
+          if (!resolved) {
+            console.warn(`bot identity not found in space ${space.id}; skipping`);
+            continue;
+          }
+          botParticipantId = resolved;
+        }
+
+        const isDirect = members.length <= 2;
+
+        const chats = await api.listChats(space.id).catch((err) => {
+          console.warn(`listChats failed for space ${space.id}: ${String(err)}`);
+          return [];
+        });
+        for (const chat of chats) {
+          if (subscribed.has(chat.id)) continue;
+          subscribed.add(chat.id);
+          chatTargets.set(chat.id, { spaceId: space.id, chatId: chat.id, isDirect });
+          void subscribeChat(
+            {
+              baseUrl: cfg.apiBaseUrl,
+              apiKey: cfg.apiKey,
+              spaceId: space.id,
+              chatId: chat.id,
+              isDirect,
+              botParticipantId,
+              since: startedAt,
+              onEvent,
+            },
+            controller.signal,
+          );
+          console.log(`subscribed space=${space.id} chat=${chat.id} direct=${isDirect}`);
+        }
       }
-      botParticipantId = resolved;
-    }
-
-    const isDirect = members.length <= 2;
-
-    const chats = await api.listChats(space.id).catch((err) => {
-      console.warn(`listChats failed for space ${space.id}: ${String(err)}`);
-      return [];
-    });
-    for (const chat of chats) {
-      chatTargets.set(chat.id, { spaceId: space.id, chatId: chat.id, isDirect });
-      void subscribeChat(
-        {
-          baseUrl: cfg.apiBaseUrl,
-          apiKey: cfg.apiKey,
-          spaceId: space.id,
-          chatId: chat.id,
-          isDirect,
-          botParticipantId,
-          since: startedAt,
-          onEvent,
-        },
-        controller.signal,
-      );
-      subscriptions++;
-      console.log(`subscribed space=${space.id} chat=${chat.id} direct=${isDirect}`);
+      console.log(`discovery: ${chatTargets.size} chat(s) subscribed`);
+    } finally {
+      discovering = false;
     }
   }
-  console.log(
-    `started: ${spaces.length} space(s), ${chatTargets.size} chat(s), ${subscriptions} subscription(s)`,
-  );
+
+  await discover();
+
+  // Re-scan periodically so newly created chats are subscribed automatically.
+  const discoverTimer = setInterval(() => {
+    void discover().catch((err) => console.warn(`discovery failed: ${String(err)}`));
+  }, 60000);
 
   const reaper = setInterval(() => {
     void sessions.reapIdle();
@@ -121,6 +139,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     controller.abort();
     clearInterval(reaper);
+    clearInterval(discoverTimer);
     await sessions.shutdown();
     process.exit(0);
   };
