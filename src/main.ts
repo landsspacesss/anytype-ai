@@ -552,6 +552,7 @@ async function main(): Promise<void> {
         spaceId: chatTargets.get(notify)?.spaceId ?? "",
         trigger: "cron",
         emit: emitRun,
+        scope: { env: {} },
       }).catch((err) => console.warn(`workflow cron '${entry.name}' failed: ${String(err)}`));
     }
   }, cfg.watchTickMs);
