@@ -20,6 +20,7 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
       { id: "obj2", name: "考试大纲", type: "page" },
     ]),
     search: vi.fn(async () => [{ id: "obj1", name: "日常试卷1", type: "page" }]),
+    filteredSearch: vi.fn(async () => [{ id: "obj1", name: "日常试卷1", type: "page" }]),
     getObjectRaw: vi.fn(async () => ({
       id: "obj1",
       type: "page",
@@ -66,9 +67,9 @@ function mkTools(api: AnytypeClient) {
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the fourteen Anytype tools with expected names", () => {
+  it("returns the eighteen Anytype tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(18);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -77,12 +78,16 @@ describe("createAnytypeTools", () => {
       "crop_image",
       "anytype_create_note",
       "anytype_update_object",
+      "anytype_edit_object",
+      "anytype_update_block",
+      "anytype_delete_block",
       "anytype_delete_object",
       "anytype_set_property",
       "anytype_list_properties",
       "anytype_create_property",
       "anytype_list_types",
       "anytype_create_collection",
+      "anytype_collection_items",
       "anytype_upload_file",
     ]);
   });
@@ -485,5 +490,159 @@ describe("createAnytypeTools", () => {
     const res = await run(toolByName(tools, "anytype_delete_object"), { id: "x" });
     expect(res.content[0].text).toContain("anytype_delete_object failed");
     expect(res.content[0].text).toContain("403");
+  });
+
+  it("anytype_edit_object emits one replace_text op", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_edit_object"), {
+      id: "obj1",
+      find: "Q3",
+      replace: "Q4",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "replace_text", find: "Q3", replace: "Q4" },
+    ]);
+    expect(res.content[0].text).toContain("Q3");
+    expect(res.content[0].text).toContain("Q4");
+  });
+
+  it("anytype_edit_object passes replace_all through when given", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    await run(toolByName(tools, "anytype_edit_object"), {
+      id: "obj1",
+      find: "Q3",
+      replace: "Q4",
+      replace_all: true,
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "replace_text", find: "Q3", replace: "Q4", replace_all: true },
+    ]);
+  });
+
+  it("anytype_update_block emits an update_block op located by match", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_update_block"), {
+      id: "obj1",
+      match: "Draft timeline",
+      set: { checked: true },
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "update_block", match: "Draft timeline", set: { checked: true } },
+    ]);
+    expect(res.content[0].text).toContain("Draft timeline");
+  });
+
+  it("anytype_update_block locates by block_id and requires a target", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    await run(toolByName(tools, "anytype_update_block"), {
+      id: "obj1",
+      block_id: "b7",
+      set: { text: "new" },
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "update_block", id: "b7", set: { text: "new" } },
+    ]);
+    const api2 = fakeApi();
+    const res = await run(toolByName(mkTools(api2), "anytype_update_block"), {
+      id: "obj1",
+      set: { checked: true },
+    });
+    expect(api2.patchObject).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/match.*block_id|block_id.*match/);
+  });
+
+  it("anytype_delete_block emits a delete_block op with recursive", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_delete_block"), {
+      id: "obj1",
+      match: "Obsolete section",
+      recursive: true,
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "delete_block", match: "Obsolete section", recursive: true },
+    ]);
+    expect(res.content[0].text).toContain("Obsolete section");
+  });
+
+  it("anytype_delete_block asks for a target when neither match nor block_id is given", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_delete_block"), { id: "obj1" });
+    expect(api.patchObject).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/match.*block_id|block_id.*match/);
+  });
+
+  it("anytype_collection_items emits add_items and remove_items ops", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_collection_items"), {
+      collection_id: "coll-1",
+      add: ["obj1", "obj2"],
+      remove: ["obj3"],
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "coll-1", [
+      { op: "add_items", items: ["obj1", "obj2"] },
+      { op: "remove_items", items: ["obj3"] },
+    ]);
+    expect(res.content[0].text).toContain("added 2");
+    expect(res.content[0].text).toContain("removed 1");
+  });
+
+  it("anytype_collection_items with only add emits a single add_items op", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_collection_items"), {
+      collection_id: "coll-1",
+      add: ["obj1"],
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "coll-1", [
+      { op: "add_items", items: ["obj1"] },
+    ]);
+  });
+
+  it("anytype_collection_items asks for add or remove when neither is given", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_collection_items"), {
+      collection_id: "coll-1",
+    });
+    expect(api.patchObject).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/add.*remove|remove.*add/);
+  });
+
+  it("anytype_search passes filters through to filteredSearch", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const filters = [{ condition: "in", property: "tag", value: ["重要"] }];
+    const res = await run(toolByName(tools, "anytype_search"), { filters });
+    expect(api.filteredSearch).toHaveBeenCalledWith(SPACE, { query: "", filters });
+    expect(api.search).not.toHaveBeenCalled();
+    const text = res.content[0].text;
+    expect(text).toContain("日常试卷1");
+    expect(text).toContain("obj1");
+  });
+
+  it("anytype_search passes query alongside filters when both are given", async () => {
+    const api = fakeApi();
+    const filters = [{ condition: "contains", property: "name", value: "x" }];
+    await run(toolByName(mkTools(api), "anytype_search"), { query: "日常", filters });
+    expect(api.filteredSearch).toHaveBeenCalledWith(SPACE, { query: "日常", filters });
+  });
+
+  it("anytype_search with query only still uses search (back-compat)", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_search"), { query: "日常" });
+    expect(api.search).toHaveBeenCalledWith(SPACE, "日常");
+    expect(api.filteredSearch).not.toHaveBeenCalled();
+  });
+
+  it("anytype_search asks for query or filters when neither is given", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_search"), {});
+    expect(api.search).not.toHaveBeenCalled();
+    expect(api.filteredSearch).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/query.*filters|filters.*query/);
   });
 });

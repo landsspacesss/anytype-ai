@@ -75,15 +75,32 @@ export class AnytypeClient {
     spaceId: string,
     query: string,
   ): Promise<Array<{ id: string; name: string; type: string }>> {
-    const url = `${this.baseUrl}/v2/spaces/${spaceId}/search?limit=25`;
+    return this.filteredSearch(spaceId, { query });
+  }
+
+  /**
+   * Search with optional structured filters. `filters` is a recursive
+   * FilterNode tree (see the API docs); it is passed through verbatim as the
+   * request body's `filters` field. Either `query` or `filters` may be given
+   * (the other is omitted from the body).
+   */
+  async filteredSearch(
+    spaceId: string,
+    opts: { query?: string; filters?: unknown; limit?: number } = {},
+  ): Promise<Array<{ id: string; name: string; type: string }>> {
+    const limit = opts.limit ?? 25;
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/search?limit=${limit}`;
+    const body: Record<string, unknown> = {};
+    if (opts.query !== undefined) body.query = opts.query;
+    if (opts.filters !== undefined) body.filters = opts.filters;
     const res = await this.fetchFn(url, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`search failed: ${res.status}`);
-    const body = (await res.json()) as { data?: Array<{ id?: string; name?: string; type?: string }> };
-    return (body.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
+    if (!res.ok) throw new Error(`filteredSearch failed: ${res.status}`);
+    const parsed = (await res.json()) as { data?: Array<{ id?: string; name?: string; type?: string }> };
+    return (parsed.data ?? []).map((o) => ({ id: o.id ?? "", name: o.name ?? "", type: o.type ?? "" }));
   }
 
   async getObjectRaw(spaceId: string, objectId: string): Promise<unknown> {

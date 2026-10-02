@@ -222,16 +222,33 @@ export function createAnytypeTools(deps: {
     name: "anytype_search",
     label: "Search Anytype",
     description:
-      "Search the current Anytype space for objects matching a text query. Use this to find notes/pages by title or content.",
-    promptSnippet: "anytype_search — search the Anytype space for objects matching a query",
+      "Search the current Anytype space by text query and/or structured filters. Use `query` to find notes/pages by title or content. Use `filters` for precise, field-based queries: a recursive FilterNode tree, e.g. [{\"condition\":\"in\",\"property\":\"tag\",\"value\":[\"重要\"]}] or a group {\"operator\":\"and\",\"filters\":[...]}. Either `query` or `filters` may be given (at least one is required).",
+    promptSnippet: "anytype_search — search the space by text query and/or structured filters",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
-      query: Type.String({ description: "The search text." }),
+      query: Type.Optional(Type.String({ description: "The search text (optional if `filters` is given)." })),
+      filters: Type.Optional(
+        Type.Unknown({
+          description:
+            "A FilterNode[] (or group) for field-based filtering, passed through to the API as `filters`.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
-        const items = (await api.search(spaceId, params.query)).filter(isContentObject);
-        return textResult(`Search results for "${params.query}":\n${renderList(items)}`);
+        const hasFilters = params.filters !== undefined;
+        const query = params.query ?? "";
+        if (!hasFilters && query.length === 0) {
+          return textResult("anytype_search: provide a `query` and/or `filters`.");
+        }
+        const items = hasFilters
+          ? await api.filteredSearch(spaceId, { query, filters: params.filters })
+          : await api.search(spaceId, query);
+        const filtered = items.filter(isContentObject);
+        const label = hasFilters
+          ? `${query.length > 0 ? `"${query}" ` : ""}filters ${JSON.stringify(params.filters)}`
+          : `"${query}"`;
+        return textResult(`Search results for ${label}:\n${renderList(filtered)}`);
       } catch (err) {
         return textResult(`anytype_search failed: ${errMessage(err)}`);
       }
@@ -637,6 +654,127 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const editObject = defineTool({
+    name: "anytype_edit_object",
+    label: "Edit Anytype object text",
+    description:
+      "Replace an exact text `find` with `replace` inside an object's body. The `find` text must match exactly one block (pass `replace_all:true` to replace every occurrence across multiple blocks).",
+    promptSnippet: "anytype_edit_object — replace an exact text `find` with `replace` inside a note",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id to edit." }),
+      find: Type.String({ description: "The exact text to find (must match exactly one block)." }),
+      replace: Type.String({ description: "The replacement text." }),
+      replace_all: Type.Optional(
+        Type.Boolean({ description: "Replace every occurrence, allowing the find to match multiple blocks." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const op: Record<string, unknown> = { op: "replace_text", find: params.find, replace: params.replace };
+        if (params.replace_all !== undefined) op.replace_all = params.replace_all;
+        await api.patchObject(spaceId, params.id, [op]);
+        return textResult(`Replaced "${params.find}" with "${params.replace}" in ${params.id}.`);
+      } catch (err) {
+        return textResult(`anytype_edit_object failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const updateBlock = defineTool({
+    name: "anytype_update_block",
+    label: "Update Anytype block",
+    description:
+      "Change fields of a single block inside an object. `id` is the object id; target the block by its exact text `match` (or by `block_id`). `set` is a JSON object of the fields to change, e.g. {\"checked\":true} to tick a checkbox or {\"text\":\"new\"} to rewrite it. Provide the object `id` and at least one of `match` or `block_id`.",
+    promptSnippet: "anytype_update_block — change a block's fields (e.g. {\"checked\":true}) by text match or block id",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id containing the block." }),
+      match: Type.Optional(Type.String({ description: "Exact text of the block to update." })),
+      block_id: Type.Optional(Type.String({ description: "The block id to update (alternative to `match`)." })),
+      set: Type.Record(Type.String(), Type.Unknown(), {
+        description: "Map of block fields to set, e.g. {\"checked\":true}.",
+      }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        if (params.match === undefined && params.block_id === undefined) {
+          return textResult("anytype_update_block: provide `match` or `block_id`.");
+        }
+        const op: Record<string, unknown> = { op: "update_block", set: params.set };
+        if (params.block_id !== undefined) op.id = params.block_id;
+        if (params.match !== undefined) op.match = params.match;
+        await api.patchObject(spaceId, params.id, [op]);
+        const target = params.block_id !== undefined ? `block id ${params.block_id}` : `match "${params.match}"`;
+        return textResult(`Updated block (${target}) with ${JSON.stringify(params.set)}.`);
+      } catch (err) {
+        return textResult(`anytype_update_block failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const deleteBlock = defineTool({
+    name: "anytype_delete_block",
+    label: "Delete Anytype block",
+    description:
+      "Delete a single block inside an object. `id` is the object id; target the block by its exact text `match` (or by `block_id`). Set `recursive:true` to also delete the block's children. Provide the object `id` and at least one of `match` or `block_id`.",
+    promptSnippet: "anytype_delete_block — delete a block (and optionally its children) by text match or block id",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id containing the block." }),
+      match: Type.Optional(Type.String({ description: "Exact text of the block to delete." })),
+      block_id: Type.Optional(Type.String({ description: "The block id to delete (alternative to `match`)." })),
+      recursive: Type.Optional(Type.Boolean({ description: "Also delete nested child blocks (default false)." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        if (params.match === undefined && params.block_id === undefined) {
+          return textResult("anytype_delete_block: provide `match` or `block_id`.");
+        }
+        const op: Record<string, unknown> = { op: "delete_block" };
+        if (params.block_id !== undefined) op.id = params.block_id;
+        if (params.match !== undefined) op.match = params.match;
+        if (params.recursive !== undefined) op.recursive = params.recursive;
+        await api.patchObject(spaceId, params.id, [op]);
+        const target = params.block_id !== undefined ? `block id ${params.block_id}` : `match "${params.match}"`;
+        return textResult(`Deleted block (${target}).`);
+      } catch (err) {
+        return textResult(`anytype_delete_block failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const collectionItems = defineTool({
+    name: "anytype_collection_items",
+    label: "Add/remove collection items",
+    description:
+      "Add and/or remove objects from an existing collection. `add` and `remove` are arrays of object ids. Provide at least one of them.",
+    promptSnippet: "anytype_collection_items — add/remove object ids from a collection",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      collection_id: Type.String({ description: "The collection object id." }),
+      add: Type.Optional(Type.Array(Type.String(), { description: "Object ids to add to the collection." })),
+      remove: Type.Optional(Type.Array(Type.String(), { description: "Object ids to remove from the collection." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const ops: unknown[] = [];
+        if (params.add && params.add.length > 0) ops.push({ op: "add_items", items: params.add });
+        if (params.remove && params.remove.length > 0) ops.push({ op: "remove_items", items: params.remove });
+        if (ops.length === 0) {
+          return textResult("anytype_collection_items: provide `add` and/or `remove`.");
+        }
+        await api.patchObject(spaceId, params.collection_id, ops);
+        const bits: string[] = [];
+        if (params.add && params.add.length > 0) bits.push(`added ${params.add.length}`);
+        if (params.remove && params.remove.length > 0) bits.push(`removed ${params.remove.length}`);
+        return textResult(`Updated collection ${params.collection_id}: ${bits.join(", ")}.`);
+      } catch (err) {
+        return textResult(`anytype_collection_items failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   return [
     listObjects,
     search,
@@ -645,12 +783,16 @@ export function createAnytypeTools(deps: {
     cropImage,
     createNote,
     updateObject,
+    editObject,
+    updateBlock,
+    deleteBlock,
     deleteObject,
     setProperty,
     listProperties,
     createProperty,
     listTypes,
     createCollection,
+    collectionItems,
     uploadFile,
   ] as ToolDefinition[];
 }
