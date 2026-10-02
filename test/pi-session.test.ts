@@ -9,7 +9,7 @@ import {
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
-import { CONSOLE_TOOLS } from "../src/agent/pi-session.js";
+import { CONSOLE_TOOLS, effectiveToolNames } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
@@ -94,5 +94,23 @@ describe("CONSOLE_TOOLS", () => {
     ]) {
       expect(CONSOLE_TOOLS).not.toContain(w);
     }
+  });
+});
+
+describe("effectiveToolNames", () => {
+  it("console is read-only even with autoTools ON", () => {
+    const names = effectiveToolNames({ isConsole: true, autoTools: true, allToolNames: ["anytype_create_note", "read"] });
+    expect(names).toContain("read");
+    expect(names).toContain("anytype_memories");
+    expect(names).not.toContain("anytype_create_note");
+  });
+  it("non-console with autoTools ON gets all tools", () => {
+    expect(effectiveToolNames({ isConsole: false, autoTools: true, allToolNames: ["anytype_create_note"] }))
+      .toEqual(["anytype_create_note"]);
+  });
+  it("non-console with autoTools OFF gets the read-only set", () => {
+    const names = effectiveToolNames({ isConsole: false, autoTools: false, allToolNames: ["anytype_create_note"] });
+    expect(names).toContain("anytype_search");
+    expect(names).not.toContain("anytype_create_note");
   });
 });

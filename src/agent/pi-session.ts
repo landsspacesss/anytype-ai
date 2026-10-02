@@ -105,6 +105,16 @@ export const CONSOLE_TOOLS: readonly string[] = [
   "web_fetch",
 ];
 
+/** Effective tool names for a session. Console is ALWAYS read-only (YOLO cannot widen it). */
+export function effectiveToolNames(o: {
+  isConsole: boolean;
+  autoTools: boolean;
+  allToolNames: string[];
+}): string[] {
+  if (o.isConsole) return [...CONSOLE_TOOLS];
+  return o.autoTools ? [...o.allToolNames] : [...READONLY_TOOLS];
+}
+
 /**
  * Tools safe to abort while they are still executing: pure reads with no side
  * effects. Everything else is treated as mutating and — under the `step`
@@ -348,8 +358,13 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   // subagent/agent). Default ON.
   let autoTools = true;
   const applyTools = (): void => {
-    const names = autoTools ? session.getAllTools().map((t) => t.name) : [...(opts.isConsole ? CONSOLE_TOOLS : READONLY_TOOLS)];
-    session.setActiveToolsByName(names);
+    session.setActiveToolsByName(
+      effectiveToolNames({
+        isConsole: opts.isConsole === true,
+        autoTools,
+        allToolNames: session.getAllTools().map((t) => t.name),
+      }),
+    );
   };
   // Establish the default (all tools) explicitly, so the agent's active set
   // matches our model of it from the first turn.
@@ -410,6 +425,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       return `已压缩当前对话${before}`;
     },
     setAutoTools(enabled: boolean): string {
+      if (opts.isConsole) return "控制台始终只读（/yolo 在此无效）";
       autoTools = enabled;
       applyTools();
       return enabled ? "YOLO 自动模式：开" : "YOLO 自动模式：关";
