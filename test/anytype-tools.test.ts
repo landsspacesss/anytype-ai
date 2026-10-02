@@ -81,6 +81,28 @@ describe("createAnytypeTools", () => {
     expect(text).not.toContain("考试大纲");
   });
 
+  it("filters out chats and system objects from list and search", async () => {
+    const api = fakeApi({
+      listObjects: vi.fn(async () => [
+        { id: "p1", name: "日常试卷1", type: "page" },
+        { id: "c1", name: "ai-bot-test", type: "chat_derived" },
+        { id: "t1", name: "A template", type: "template" },
+      ]),
+      search: vi.fn(async () => [
+        { id: "p1", name: "日常试卷1", type: "page" },
+        { id: "c1", name: "ai-bot-test", type: "chat_derived" },
+      ]),
+    });
+    const tools = createAnytypeTools({ api, spaceId: SPACE });
+    const listed = await run(toolByName(tools, "anytype_list_objects"), {});
+    expect(listed.content[0].text).toContain("日常试卷1");
+    expect(listed.content[0].text).not.toContain("ai-bot-test");
+    expect(listed.content[0].text).not.toContain("A template");
+    const searched = await run(toolByName(tools, "anytype_search"), { query: "x" });
+    expect(searched.content[0].text).toContain("日常试卷1");
+    expect(searched.content[0].text).not.toContain("ai-bot-test");
+  });
+
   it("anytype_search calls search(spaceId, query) and shows matches", async () => {
     const api = fakeApi();
     const tools = createAnytypeTools({ api, spaceId: SPACE });

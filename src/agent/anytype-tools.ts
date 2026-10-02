@@ -10,6 +10,21 @@ interface ObjectRef {
   type: string;
 }
 
+/** Object types that are NOT user content (chats, system containers, templates). */
+const NON_CONTENT_TYPES = new Set([
+  "chat",
+  "chat_derived",
+  "template",
+  "widget",
+  "space",
+  "participant",
+]);
+
+/** True for real user content (pages, notes, tasks, …), false for chats/system objects. */
+function isContentObject(o: ObjectRef): boolean {
+  return !NON_CONTENT_TYPES.has((o.type || "").toLowerCase());
+}
+
 /** Build an AgentToolResult carrying a single text blob. */
 function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, never> } {
   return { content: [{ type: "text", text }], details: {} };
@@ -81,7 +96,7 @@ export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }
     }),
     async execute(_toolCallId, params) {
       try {
-        let items = await api.listObjects(spaceId);
+        let items = (await api.listObjects(spaceId)).filter(isContentObject);
         if (typeof params.limit === "number" && params.limit >= 0) items = items.slice(0, params.limit);
         return textResult(`${items.length} object(s) in the space:\n${renderList(items)}`);
       } catch (err) {
@@ -102,7 +117,7 @@ export function createAnytypeTools(deps: { api: AnytypeClient; spaceId: string }
     }),
     async execute(_toolCallId, params) {
       try {
-        const items = await api.search(spaceId, params.query);
+        const items = (await api.search(spaceId, params.query)).filter(isContentObject);
         return textResult(`Search results for "${params.query}":\n${renderList(items)}`);
       } catch (err) {
         return textResult(`anytype_search failed: ${errMessage(err)}`);
