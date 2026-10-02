@@ -48,9 +48,47 @@ function renderList(items: ObjectRef[]): string {
     .join("\n");
 }
 
+/** Render a single Anytype block as a Markdown line (without the indent prefix). */
+function blockToMarkdown(block: Record<string, unknown>): string {
+  const type = typeof block.type === "string" ? block.type : "";
+  const text = typeof block.text === "string" ? block.text : "";
+  const checked = block.checked === true;
+
+  switch (type) {
+    case "heading_1": return `# ${text}`;
+    case "heading_2": return `## ${text}`;
+    case "heading_3": return `### ${text}`;
+    case "heading_4": return `#### ${text}`;
+    case "bulleted_list_item": return `- ${text}`;
+    case "numbered_list_item": return `1. ${text}`;
+    case "toggle": return `- ${text} ▸`;
+    case "checkbox": return `- [${checked ? "x" : " "}] ${text}`;
+    case "quote": return `> ${text}`;
+    case "callout": return `> ${text}`;
+    case "code": {
+      const lang = typeof block.language === "string" ? block.language : "";
+      return `\`\`\`${lang}\n${text}\n\`\`\``;
+    }
+    case "divider": return "---";
+    case "image": {
+      const label = typeof block.name === "string" && block.name.length > 0 ? block.name : "image";
+      const oid = typeof block.object_id === "string" ? block.object_id : "";
+      return `![${label}](${oid})`;
+    }
+    case "file": {
+      const label = typeof block.name === "string" && block.name.length > 0 ? block.name : "file";
+      const oid = typeof block.object_id === "string" ? block.object_id : "";
+      return `[${label}](${oid})`;
+    }
+    case "paragraph": return text;
+    default: return text;
+  }
+}
+
 /**
- * Render an AnyBlock document for the model: the object title plus the text of
- * every block that carries a string `text` field. Robust to missing fields.
+ * Render an AnyBlock document as Markdown for the model: the object title plus
+ * every block converted to Markdown (headings, lists, checkboxes, code fences,
+ * quotes, images), preserving nesting via `indent`. Robust to missing fields.
  */
 function renderObject(doc: unknown): string {
   if (doc === null || typeof doc !== "object") return "Object has no readable content.";
@@ -63,18 +101,19 @@ function renderObject(doc: unknown): string {
   const title = typeof nameStr === "string" && nameStr.length > 0 ? nameStr : "(untitled)";
 
   const blocks = Array.isArray(d.blocks) ? d.blocks : [];
-  const bodyText: string[] = [];
+  const lines: string[] = [`# ${title}`, ""];
+  let rendered = 0;
   for (const b of blocks) {
     if (b === null || typeof b !== "object") continue;
     const block = b as Record<string, unknown>;
-    if (typeof block.text === "string" && block.text.length > 0) bodyText.push(block.text);
+    const md = blockToMarkdown(block);
+    if (md.trim().length === 0) continue;
+    const indent = typeof block.indent === "number" && block.indent > 0 ? block.indent : 0;
+    lines.push("  ".repeat(indent) + md);
+    rendered++;
   }
-
-  const lines = [`# ${title}`];
-  if (bodyText.length > 0) {
-    lines.push("", bodyText.join("\n"));
-  } else {
-    // No text — but don't call the page "empty": describe what IS there (e.g. images).
+  if (rendered === 0) {
+    // No renderable content — describe what IS there by block type.
     const counts = new Map<string, number>();
     for (const b of blocks) {
       if (b === null || typeof b !== "object") continue;
@@ -86,7 +125,7 @@ function renderObject(doc: unknown): string {
     const summary = counts.size > 0
       ? [...counts].map(([t, n]) => `${n}× ${t}`).join(", ")
       : "none";
-    lines.push("", `(no text content; ${blocks.length} block(s): ${summary})`);
+    lines.push(`(no readable content; ${blocks.length} block(s): ${summary})`);
   }
   return lines.join("\n");
 }

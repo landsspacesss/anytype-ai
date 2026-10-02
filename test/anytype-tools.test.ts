@@ -182,18 +182,23 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("500");
   });
 
-  it("describes non-text blocks instead of calling the page empty", async () => {
+  it("renders image blocks as markdown (not an empty page)", async () => {
     const api = fakeApi({
       getObjectRaw: vi.fn(async () => ({
         properties: { name: "日常试卷1" },
-        blocks: [{ type: "image" }, { type: "image" }, { type: "image" }, { type: "image" }],
+        blocks: [
+          { type: "image", object_id: "f1", name: "a.jpg" },
+          { type: "image", object_id: "f2", name: "b.jpg" },
+        ],
       })),
     });
     const tools = mkTools(api);
     const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
     const text = res.content[0].text;
     expect(text).toContain("日常试卷1");
-    expect(text).toContain("4× image");
+    expect(text).toContain("![a.jpg](f1)");
+    expect(text).toContain("![b.jpg](f2)");
+    expect((text.match(/!\[/g) || []).length).toBe(2);
   });
 
   it("attaches page images as image content (downscaled to jpeg)", async () => {
@@ -261,6 +266,37 @@ describe("createAnytypeTools", () => {
 
     const refused = await run(toolByName(tools, "crop_image"), { path: "/etc/passwd" });
     expect(refused.content[0].text).toMatch(/refused|no such file/i);
+  });
+
+  it("renders blocks as structured Markdown (headings, lists, checkbox, code, indent)", async () => {
+    const api = fakeApi({
+      getObjectRaw: vi.fn(async () => ({
+        properties: { name: "大纲" },
+        blocks: [
+          { id: "b1", type: "heading_1", text: "标题一" },
+          { id: "b2", type: "paragraph", text: "正文" },
+          { id: "b3", type: "bulleted_list_item", text: "一级项" },
+          { id: "b4", type: "bulleted_list_item", text: "二级项", indent: 1 },
+          { id: "b5", type: "checkbox", text: "已完成", checked: true },
+          { id: "b6", type: "checkbox", text: "未完成" },
+          { id: "b7", type: "code", text: "print(1)", language: "python" },
+          { id: "b8", type: "quote", text: "引用" },
+          { id: "b9", type: "divider" },
+        ],
+      })),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_read_object"), { id: "x" });
+    const t = res.content[0].text;
+    expect(t).toContain("# 大纲");
+    expect(t).toContain("# 标题一"); // heading_1 block inside the doc
+    expect(t).toContain("- 一级项");
+    expect(t).toContain("  - 二级项"); // indent preserved
+    expect(t).toContain("- [x] 已完成");
+    expect(t).toContain("- [ ] 未完成");
+    expect(t).toContain("```python");
+    expect(t).toContain("> 引用");
+    expect(t).toContain("---");
   });
 
   it("renders the title when properties.name comes back as an array (post-patch shape)", async () => {
