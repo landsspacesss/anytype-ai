@@ -37,7 +37,7 @@ describe("WorkflowRunStore", () => {
     const root = tmpRoot();
     const store = new WorkflowRunStore(root);
     store.create(mkState("r3"));
-    store.log("r3", "line1\nline2");
+    store.log("r3", "line1\r\nline2");
     const log = fs.readFileSync(path.join(store.dir("r3"), "log.ndjson"), "utf-8").trim().split("\n");
     expect(log).toEqual(["line1", "line2"]);
   });
