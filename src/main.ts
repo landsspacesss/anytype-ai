@@ -545,15 +545,31 @@ async function main(): Promise<void> {
       if (wfFiredMinute.get(entry.name) === key) continue;
       wfFiredMinute.set(entry.name, key);
       const notify = def.on?.notify ?? "";
-      void runWorkflow(def, {
-        store: runStore,
-        ctx: stepCtxFor(notify),
-        chatId: notify,
-        spaceId: chatTargets.get(notify)?.spaceId ?? "",
-        trigger: "cron",
-        emit: emitRun,
-        scope: { env: {} },
-      }).catch((err) => console.warn(`workflow cron '${entry.name}' failed: ${String(err)}`));
+      void (async () => {
+        try {
+          const state = await runWorkflow(def, {
+            store: runStore,
+            ctx: stepCtxFor(notify),
+            chatId: notify,
+            spaceId: chatTargets.get(notify)?.spaceId ?? "",
+            trigger: "cron",
+            emit: emitRun,
+            scope: { env: {} },
+          });
+          // Post the run RESULT to the chat it was scheduled for (spec §6: cron
+          // result → on.notify), mirroring the manual path's command reply.
+          const spaceId = notify ? chatTargets.get(notify)?.spaceId : undefined;
+          if (!spaceId) return;
+          const last = [...state.steps].reverse().find((s) => s.output && s.output.trim());
+          const headline = `工作流 ${def.name} ${state.status === "done" ? "✅ 完成" : "❌ " + state.status}`;
+          const body = last?.output ? `\n${last.output}` : "";
+          await api
+            .sendMessage(spaceId, notify, headline + body, `wf-${state.id}-result-${++sendSeq}`)
+            .catch((err) => console.warn(`workflow cron result post failed: ${String(err)}`));
+        } catch (err) {
+          console.warn(`workflow cron '${entry.name}' failed: ${String(err)}`);
+        }
+      })();
     }
   }, cfg.watchTickMs);
 
