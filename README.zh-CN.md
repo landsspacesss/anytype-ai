@@ -22,7 +22,8 @@ Anytype 是一个很棒的、私密的、本地优先的 Notion 替代品——�
 - **定时订阅** —— 按 cron 订阅某个对象，它一变就让 AI 执行你的指令（如"总结变化"）并发回。
 - **子代理** —— 一次性 `subagent`；以及常驻命名子代理（`agent` 的 spawn/message/list/kill），可跨轮对话。
 - **打断（barge-in）** —— 它还在干活的**时候你再发一条**，旧的那条就被丢弃、当前回合被打断，**优先处理最新的消息**。默认策略绝不在**写操作**（建/改/删）进行到一半时打断。
-- **聊天指令** —— `/new` `/clear` `/compact` `/model` `/effort` `/yolo` `/interrupt` `/help`。
+- **审批模式（`/yolo` 三档）** —— 按聊天设置：`auto`（默认，从不过问）、`ask`（写/危险操作先在聊天里问你，回 `/approve`、`/approve all` 或 `/deny`；超时即拒绝）、`readonly`（不能写）。⚠️ `/yolo off` 现在= `ask`，要只读请用 `/yolo readonly`。
+- **聊天指令** —— `/new` `/clear` `/compact` `/model` `/effort` `/yolo` `/approve` `/deny` `/interrupt` `/help`。
 - **对话持久化** —— 每个聊天的历史重启不丢。
 
 ## 架构 —— 这是一个**独立服务**

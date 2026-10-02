@@ -196,9 +196,11 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `/compact` | 压缩当前对话（省上下文） |
 | `/model [名]` | 查看 / 切换本聊天的模型（如 `deepseek-v4-pro`） |
 | `/effort [low\|medium\|high\|max]` | 查看 / 设置思考等级 |
-| `/yolo [on\|off]` | **自动模式**（默认开）：开=全部工具；关=**只读**（禁增删改） |
+| `/yolo [auto\|ask\|readonly]` | **审批模式**（默认 `auto`）：`auto`=全部工具、从不过问；`ask`=写/危险操作需你批准（见第 7 节）；`readonly`=不能写。别名 `on`→auto、`off`→ask、`ro`→readonly。无参数=查看当前模式 |
+| `/approve [all]` | **批准**待批准的操作：`/approve` 只放行这一个，`/approve all` 放行本次及**本回合**后续全部（见第 7 节）|
+| `/deny` | **拒绝**待批准的操作（见第 7 节）|
 | `/interrupt [now\|step]` | **打断策略**：`now`=新消息一到就打断当前回合；`step`=**等当前这一步**（思考/读）结束再打断——**写操作进行中则等它写完**（默认）。设置**立即生效**，会作用于进行中的回合 |
-| `/join <链接>` | **加入空间**（邀请链接）或**接入控制台**（你的 1:1 链接）——不经 agent，直接处理（见第 7 节）|
+| `/join <链接>` | **加入空间**（邀请链接）或**接入控制台**（你的 1:1 链接）——不经 agent，直接处理（见第 8 节）|
 | `/help` | 列出指令 |
 
 > 指令只在**会触发**的消息里生效（即私聊，或被 @ 的群聊消息）。执行指令**不经过** agent，直接回结果。
@@ -218,7 +220,30 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 ---
 
-## 7. 控制台（全局助手）
+## 7. 审批模式（auto / ask / readonly）
+
+`/yolo` 控制**每个聊天**的审批模式（新会话的默认值由 `APPROVAL_MODE` 决定，默认 `auto`）。三种模式：
+
+| 模式 | 行为 |
+|---|---|
+| `auto`（普通空间默认） | **从不过问**，所有工具直接执行。行为与以往一致。 |
+| `ask` | 写/危险工具调用**不立即执行**：bot 先在聊天里发 `⚠️ 想执行 <工具>(<参数>)，回复 /approve、/approve all 或 /deny`，然后**等待**。你回 `/approve`（只放行这一个）、`/approve all`（放行本次及**本回合**后续全部）或 `/deny`（拒绝）。**超时 = 拒绝**（默认 5 分钟，`APPROVAL_TIMEOUT_MS`）。⚠️ `ask` 模式下 `subagent` / `agent` **直接拒绝**（它们会绕过审批）——想委派子代理请先 `/yolo auto`。 |
+| `readonly` | **完全不能写**（只保留安全只读工具）。子代理**仍允许**，但**子会话同样是只读**——委派也写不了。 |
+
+用法：
+
+- `/yolo`（无参数）→ 查看当前模式。
+- `/yolo auto|ask|readonly` → 设置（别名：`on`→auto，`off`→ask，`ro`→readonly）。
+
+> ⚠️ **行为变更**：`/yolo off` 过去表示「只读」，**现在表示 `ask`**（每个写操作都要你批准）。要只读请改用 **`/yolo readonly`**。
+
+`APPROVAL_MODE` 环境变量设置**新会话**（非控制台）的默认模式；`APPROVAL_TIMEOUT_MS` 设置 `ask` 模式下等待批准的超时（毫秒，超时即拒绝）。
+
+**控制台不受影响**：它**始终只读**，`/yolo` 在控制台里无效（回「控制台始终只读」）。
+
+---
+
+## 8. 控制台（全局助手）
 
 **控制台**是**一个特定空间**（一个 1:1 空间）——它被授予**跨空间的全局能力**，作为你统一查询各空间的入口。**普通空间完全不受影响**：它们看不到别的空间。
 
@@ -266,7 +291,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 
 ---
 
-## 8. 排障
+## 9. 排障
 
 | 现象 | 原因 / 处理 |
 |---|---|
@@ -275,16 +300,17 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | 日志里 `oom ready timeout` | **已废弃**（那是旧 omp 时代的错误）。若还出现说明跑的是旧镜像，重建。 |
 | 收到消息但长时间不回复、无反应 | ① 看 `aibot logs ai-bot` 有无报错；② 消息是否比 bot 启动时间早（订阅时会跳过历史回放）；③ 重启 bot（刷新 SSE 订阅）。 |
 | 连发几条消息，只有**最后一条**有回复 | **正常**：这是打断（barge-in）——旧消息被丢弃、只跑最新那条。想改打断时机用 `/interrupt now\|step`（见第 6 节）。 |
+| `ask` 模式下 bot 一直卡着不动 | **正常**——它在等你 `/approve` 或 `/deny`（或在 5 分钟后自动拒绝）。回复 `/approve`、`/approve all` 或 `/deny` 即可继续（见第 7 节）。 |
 | 打断了一次写操作，对象像是只写了一半 | 说明当时策略是 `now`。改成 `/interrupt step`（默认）——写操作进行中会**等它写完**再打断。 |
 | 问"笔记"它去翻本地文件 | 应调 `anytype_*` 工具。检查 `AGENTS.md` 是否有身份提示段，以及它是否在 bot 所在空间里。 |
 | 回复很慢（分钟级） | 那是旧 omp 架构。当前是内嵌 pi SDK，正常 **几秒**。 |
 | 内存 | 正常空闲 ~70–100MB；上限 2G。看 `docker stats anytype-ai-bot-1`。 |
 | 容器停了 | `docker ps -a` 看退出码；`restart: unless-stopped` 一般会自动拉起。 |
-| 控制台 / `/join` 加入失败 | ① 确认 bot 容器**只读挂载**了 anytype-cli 配置目录（桥靠它读 `sessionToken`，见第 7 节）；② **别调 `WorkspaceGetAll` 之类桩方法**——会打死 anytype-cli，需重建 bot（`… up -d --force-recreate --no-deps ai-bot`）；③ 对**已存在**的 1:1 重跑 `/join` 可能超时——**无害**，控制台已可用。 |
+| 控制台 / `/join` 加入失败 | ① 确认 bot 容器**只读挂载**了 anytype-cli 配置目录（桥靠它读 `sessionToken`，见第 8 节）；② **别调 `WorkspaceGetAll` 之类桩方法**——会打死 anytype-cli，需重建 bot（`… up -d --force-recreate --no-deps ai-bot`）；③ 对**已存在**的 1:1 重跑 `/join` 可能超时——**无害**，控制台已可用。 |
 
 ---
 
-## 9. 关键常量（速查）
+## 10. 关键常量（速查）
 
 | 项 | 值 |
 |---|---|
@@ -294,10 +320,12 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | anytype-cli 容器 | `anytype-anytype-cli-1` |
 | bot 容器 | `anytype-ai-bot-1` |
 | 测试空间 | `<space-name>`（API id `<space-id>`） |
+| `APPROVAL_MODE` | 新会话默认审批模式（`auto`/`ask`/`readonly`，默认 `auto`） |
+| `APPROVAL_TIMEOUT_MS` | `ask` 模式待批准超时，超时即拒绝（默认 `300000`，即 5 分钟） |
 
 ---
 
-## 10. 从零重建（灾难恢复）
+## 11. 从零重建（灾难恢复）
 
 1. 起 any-sync 栈（含 anytype-cli）：见 `/home/landspace/anytype` 的说明；`anytype-cli` 两段服务已在 `docker-compose.yml` 中启用。
 2. 建 bot 账号 + key：

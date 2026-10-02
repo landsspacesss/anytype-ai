@@ -111,6 +111,20 @@ Key facts that span multiple files:
   allow-list so unknown tools default to "not safe"), and the interrupted turn's
   `prompt()` returns `""` so no half-written reply is posted. `/interrupt [now|step]`
   sets it and applies it to the running turn right away.
+- **Approval mode is per-chat and three-valued** — `ApprovalMode = "auto" | "ask" |
+  "readonly"` (`src/agent/approval.ts`). `auto` never asks (default; env
+  `APPROVAL_MODE` sets the default for new **non-console** sessions). `ask` enforces a
+  real gate: a pi extension registered via `pi.on("tool_call")` returns `{block:true}`
+  for a write/unsafe tool unless the user replies `/approve` / `/approve all` / `/deny`
+  (timeout = **deny**, `APPROVAL_TIMEOUT_MS`, default 5 min); `subagent`/`agent` are
+  **refused outright** in `ask` (they'd bypass the gate). That extension is registered
+  through a caller-supplied `DefaultResourceLoader` that **MUST be `await reload()`ed**
+  (`buildSessionResourceLoader`) — the SDK uses a caller-supplied loader **as-is** and
+  never auto-reloads it, so a missing reload silently drops the gate. `readonly` drops
+  every write tool, and its child sessions are set to `SAFE_TOOLS`-only. The console is
+  always `CONSOLE_TOOLS`/read-only and `/yolo` is inert there. **Behavior change:**
+  `/yolo off` now means `ask` (it used to mean "read-only"); read-only is `/yolo
+  readonly`.
 
 ## Anytype API gotchas (learned the hard way)
 
