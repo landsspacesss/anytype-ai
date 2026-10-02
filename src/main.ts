@@ -7,6 +7,8 @@ import { resolveBotParticipantId } from "./anytype/members.js";
 import { extractDiscussionId } from "./anytype/discussion.js";
 import { subscribeChat } from "./anytype/stream.js";
 import { createPiClient, ensureAgentFiles, ensureModelsConfig } from "./agent/pi-session.js";
+import { ApprovalGate } from "./agent/approval.js";
+import type { ApprovalMode } from "./agent/approval.js";
 import { SessionManager } from "./session/manager.js";
 import { sanitize } from "./util/sanitize.js";
 import { Router } from "./router/router.js";
@@ -89,6 +91,8 @@ async function main(): Promise<void> {
   const sessions: SessionManager = new SessionManager({
     maxConcurrent: cfg.maxConcurrentSessions,
     idleMs: cfg.idleReapMs,
+    // Initial approval mode for a chat that never had one set (env APPROVAL_MODE).
+    defaultApprovalMode: cfg.approvalMode,
     // After /new: drop this chat's persisted session files so the fresh session
     // neither resumes nor leaves stale history on disk.
     clearHistory: async (chatId) => {
@@ -137,6 +141,10 @@ async function main(): Promise<void> {
         // A brand-new client adopts the chat's current interrupt policy, so a
         // policy set via /interrupt survives an idle-reap/rebuild.
         interruptPolicy: sessions.getInterruptPolicy(chatId),
+        // Wire this chat's approval gate (ask mode) and its current mode, so a
+        // mode set via /yolo survives an idle-reap/rebuild.
+        approvalGate: gateFor({ spaceId, chatId }),
+        approvalMode: sessions.getApprovalMode(chatId),
       });
     },
   });
@@ -146,6 +154,28 @@ async function main(): Promise<void> {
     send: (target, text, key) => api.sendMessage(target.spaceId, target.chatId, text, key),
     keyFor: (target) => `${target.chatId}-${Date.now()}`,
   });
+
+  // One approval gate per chat; its `post` writes the prompt into that chat.
+  // The gate is created lazily on first client build and reused across rebuilds,
+  // so a pending /approve-all decision is remembered for the chat's lifetime.
+  const gates = new Map<string, ApprovalGate>();
+  const gateFor = (target: ChatTarget): ApprovalGate => {
+    let g = gates.get(target.chatId);
+    if (!g) {
+      g = new ApprovalGate({
+        timeoutMs: cfg.approvalTimeoutMs,
+        post: (text) =>
+          api.sendMessage(
+            target.spaceId,
+            target.chatId,
+            text,
+            `approval-${target.chatId}-${Date.now()}`,
+          ),
+      });
+      gates.set(target.chatId, g);
+    }
+    return g;
+  };
 
   // Live tool-call status transport: post a placeholder that returns its id so
   // the Router can edit it as tools run and delete it when the turn ends. Only
