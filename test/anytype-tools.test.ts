@@ -32,6 +32,19 @@ function fakeApi(overrides: Partial<Record<keyof AnytypeClient, unknown>> = {}):
     })),
     createObject: vi.fn(async () => ({ id: "new-123" })),
     downloadFileContent: vi.fn(async () => ({ data: Buffer.from([]), mimeType: "image/jpeg" })),
+    patchObject: vi.fn(async () => ({})),
+    deleteObject: vi.fn(async () => {}),
+    listProperties: vi.fn(async () => [
+      { key: "status", name: "Status", format: "select" },
+      { key: "tags", name: "Tags", format: "multi_select" },
+    ]),
+    createProperty: vi.fn(async () => ({ key: "priority" })),
+    listTypes: vi.fn(async () => [
+      { key: "page", name: "Page" },
+      { key: "note", name: "Note" },
+    ]),
+    createCollection: vi.fn(async () => ({ id: "coll-1" })),
+    uploadFile: vi.fn(async () => ({ id: "file-1" })),
   };
   return { ...base, ...overrides } as unknown as AnytypeClient;
 }
@@ -53,9 +66,9 @@ function mkTools(api: AnytypeClient) {
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the six Anytype tools with expected names", () => {
+  it("returns the fourteen Anytype tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(14);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -63,6 +76,14 @@ describe("createAnytypeTools", () => {
       "anytype_download_images",
       "crop_image",
       "anytype_create_note",
+      "anytype_update_object",
+      "anytype_delete_object",
+      "anytype_set_property",
+      "anytype_list_properties",
+      "anytype_create_property",
+      "anytype_list_types",
+      "anytype_create_collection",
+      "anytype_upload_file",
     ]);
   });
 
@@ -251,5 +272,168 @@ describe("createAnytypeTools", () => {
     const text = res.content[0].text;
     expect(text).toContain("(untitled)");
     expect(text).toContain("ok");
+  });
+
+  it("anytype_update_object with name emits a set_properties op", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_update_object"), {
+      id: "obj1",
+      name: "New title",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "set_properties", set: { name: ["New title"] } },
+    ]);
+    expect(res.content[0].text).toContain("New title");
+  });
+
+  it("anytype_update_object with append_markdown emits an insert_blocks last op", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    await run(toolByName(tools, "anytype_update_object"), {
+      id: "obj1",
+      append_markdown: "hello\n- a\n- b",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "insert_blocks", markdown: "hello\n- a\n- b", position: "last" },
+    ]);
+  });
+
+  it("anytype_update_object with both emits both ops in order", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_update_object"), {
+      id: "obj1",
+      name: "T2",
+      append_markdown: "body",
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      { op: "set_properties", set: { name: ["T2"] } },
+      { op: "insert_blocks", markdown: "body", position: "last" },
+    ]);
+    const text = res.content[0].text;
+    expect(text).toContain("renamed");
+    expect(text).toContain("appended");
+  });
+
+  it("anytype_update_object asks for an argument when neither is given", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_update_object"), { id: "obj1" });
+    expect(api.patchObject).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/name.*append_markdown|append_markdown.*name/);
+  });
+
+  it("anytype_delete_object calls deleteObject(spaceId, id)", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_delete_object"), { id: "obj9" });
+    expect(api.deleteObject).toHaveBeenCalledWith(SPACE, "obj9");
+    expect(res.content[0].text).toContain("obj9");
+  });
+
+  it("anytype_set_property emits one set_properties op with the provided buckets", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    await run(toolByName(tools, "anytype_set_property"), {
+      id: "obj1",
+      key: "tags",
+      set: { status: ["Done"] },
+      add: { tags: ["Urgent"] },
+      unset: ["due_date"],
+    });
+    expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
+      {
+        op: "set_properties",
+        set: { status: ["Done"] },
+        add: { tags: ["Urgent"] },
+        unset: ["due_date"],
+      },
+    ]);
+  });
+
+  it("anytype_list_properties renders name (format) — key", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_list_properties"), {});
+    expect(api.listProperties).toHaveBeenCalledWith(SPACE);
+    const text = res.content[0].text;
+    expect(text).toContain("Status (select) — status");
+    expect(text).toContain("Tags (multi_select) — tags");
+  });
+
+  it("anytype_create_property maps option names and returns the key", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_create_property"), {
+      name: "Priority",
+      format: "multi_select",
+      options: ["Low", "High"],
+    });
+    expect(api.createProperty).toHaveBeenCalledWith(SPACE, {
+      name: "Priority",
+      format: "multi_select",
+      options: [{ name: "Low" }, { name: "High" }],
+    });
+    expect(res.content[0].text).toContain("priority");
+  });
+
+  it("anytype_list_types renders name — key", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_list_types"), {});
+    expect(api.listTypes).toHaveBeenCalledWith(SPACE);
+    const text = res.content[0].text;
+    expect(text).toContain("Page — page");
+    expect(text).toContain("Note — note");
+  });
+
+  it("anytype_create_collection passes name/items and returns the id", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_create_collection"), {
+      name: "Reading",
+      items: ["obj1", "obj2"],
+    });
+    expect(api.createCollection).toHaveBeenCalledWith(SPACE, {
+      name: "Reading",
+      items: ["obj1", "obj2"],
+    });
+    expect(res.content[0].text).toContain("coll-1");
+  });
+
+  it("anytype_upload_file forwards url/path/name and returns the id", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_upload_file"), {
+      url: "https://example.com/a.png",
+      name: "a.png",
+    });
+    expect(api.uploadFile).toHaveBeenCalledWith(SPACE, {
+      url: "https://example.com/a.png",
+      path: undefined,
+      name: "a.png",
+    });
+    expect(res.content[0].text).toContain("file-1");
+  });
+
+  it("anytype_upload_file asks for url or path when neither is given", async () => {
+    const api = fakeApi();
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_upload_file"), {});
+    expect(api.uploadFile).not.toHaveBeenCalled();
+    expect(res.content[0].text).toMatch(/url.*path|path.*url/);
+  });
+
+  it("surfaces failures of the new tools as text instead of throwing", async () => {
+    const api = fakeApi({
+      deleteObject: vi.fn(async () => {
+        throw new Error("deleteObject failed: 403");
+      }),
+    });
+    const tools = mkTools(api);
+    const res = await run(toolByName(tools, "anytype_delete_object"), { id: "x" });
+    expect(res.content[0].text).toContain("anytype_delete_object failed");
+    expect(res.content[0].text).toContain("403");
   });
 });

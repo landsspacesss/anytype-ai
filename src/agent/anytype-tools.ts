@@ -360,5 +360,254 @@ export function createAnytypeTools(deps: {
     },
   });
 
-  return [listObjects, search, readObject, downloadImages, cropImage, createNote] as ToolDefinition[];
+  const updateObject = defineTool({
+    name: "anytype_update_object",
+    label: "Update Anytype object",
+    description:
+      "Edit an existing Anytype object: rename it and/or append markdown to the end of its body. Provide at least one of `name` (new title) or `append_markdown` (markdown appended as new content).",
+    promptSnippet: "anytype_update_object — rename an object and/or append markdown to it",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id to update." }),
+      name: Type.Optional(Type.String({ description: "New title for the object." })),
+      append_markdown: Type.Optional(
+        Type.String({ description: "Markdown to append to the end of the object's body." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const ops: unknown[] = [];
+        if (params.name !== undefined) {
+          ops.push({ op: "set_properties", set: { name: [params.name] } });
+        }
+        if (params.append_markdown !== undefined) {
+          ops.push({ op: "insert_blocks", markdown: params.append_markdown, position: "last" });
+        }
+        if (ops.length === 0) {
+          return textResult("anytype_update_object: provide `name` and/or `append_markdown`.");
+        }
+        await api.patchObject(spaceId, params.id, ops);
+        const parts: string[] = [];
+        if (params.name !== undefined) parts.push(`renamed to "${params.name}"`);
+        if (params.append_markdown !== undefined) parts.push("appended markdown");
+        return textResult(`Updated object ${params.id}: ${parts.join(", ")}.`);
+      } catch (err) {
+        return textResult(`anytype_update_object failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const deleteObject = defineTool({
+    name: "anytype_delete_object",
+    label: "Delete Anytype object",
+    description:
+      "Delete an Anytype object (a note/page, collection, or file) by id. This is permanent — confirm the id first with anytype_list_objects or anytype_search.",
+    promptSnippet: "anytype_delete_object — permanently delete an Anytype object by id",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id to delete." }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        await api.deleteObject(spaceId, params.id);
+        return textResult(`Deleted object ${params.id}.`);
+      } catch (err) {
+        return textResult(`anytype_delete_object failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const setProperty = defineTool({
+    name: "anytype_set_property",
+    label: "Set Anytype object property",
+    description:
+      "Set/add/remove a property value on an Anytype object. `set`/`add`/`remove` are objects mapping a property key to an array of values (e.g. {\"status\":[\"Done\"]}); `unset` is an array of property keys to clear. Find keys with anytype_list_properties.",
+    promptSnippet: "anytype_set_property — set/add/remove/unset a property (tag, status, …) on an object",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      id: Type.String({ description: "The object id to modify." }),
+      key: Type.String({ description: "The primary property key this call concerns." }),
+      set: Type.Optional(
+        Type.Record(Type.String(), Type.Array(Type.Unknown()), {
+          description: "Map of property key -> values to set (replaces existing).",
+        }),
+      ),
+      add: Type.Optional(
+        Type.Record(Type.String(), Type.Array(Type.Unknown()), {
+          description: "Map of property key -> values to add (e.g. add a tag).",
+        }),
+      ),
+      remove: Type.Optional(
+        Type.Record(Type.String(), Type.Array(Type.Unknown()), {
+          description: "Map of property key -> values to remove.",
+        }),
+      ),
+      unset: Type.Optional(
+        Type.Array(Type.String(), { description: "Property keys to clear entirely." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const op: Record<string, unknown> = { op: "set_properties" };
+        if (params.set) op.set = params.set;
+        if (params.add) op.add = params.add;
+        if (params.remove) op.remove = params.remove;
+        if (params.unset) op.unset = params.unset;
+        await api.patchObject(spaceId, params.id, [op]);
+        const bits: string[] = [];
+        if (params.set) bits.push(`set ${Object.keys(params.set).join(", ")}`);
+        if (params.add) bits.push(`added to ${Object.keys(params.add).join(", ")}`);
+        if (params.remove) bits.push(`removed from ${Object.keys(params.remove).join(", ")}`);
+        if (params.unset) bits.push(`unset ${params.unset.join(", ")}`);
+        return textResult(`Updated ${params.id}: ${bits.join("; ") || `property ${params.key}`}.`);
+      } catch (err) {
+        return textResult(`anytype_set_property failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const listProperties = defineTool({
+    name: "anytype_list_properties",
+    label: "List Anytype properties",
+    description:
+      "List the properties (fields) defined in the current Anytype space, with their name, format, and the `key` used to address them. Use the key with anytype_set_property.",
+    promptSnippet: "anytype_list_properties — list the space's properties (name, format, key)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const props = await api.listProperties(spaceId);
+        if (props.length === 0) return textResult("The space defines no properties.");
+        const lines = props.map((p) => `${p.name || "(unnamed)"} (${p.format || "unknown"}) — ${p.key}`);
+        return textResult(`${props.length} propert(ies) in the space:\n${lines.join("\n")}`);
+      } catch (err) {
+        return textResult(`anytype_list_properties failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const createProperty = defineTool({
+    name: "anytype_create_property",
+    label: "Create Anytype property (tag)",
+    description:
+      "Create a new property in the current space. Use format `select` or `multi_select` for tags, and pass option names to predefine them. Returns the new property key.",
+    promptSnippet: "anytype_create_property — create a property/tag (select/multi_select) in the space",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      name: Type.String({ description: "The property name (e.g. \"Priority\")." }),
+      format: Type.Optional(
+        Type.String({
+          description:
+            "Property format: text|number|select|multi_select|date|files|checkbox|url|email|phone|objects (default select).",
+        }),
+      ),
+      options: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "For select/multi_select: the option (tag) names to create.",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const options = (params.options ?? []).map((name) => ({ name }));
+        const { key } = await api.createProperty(spaceId, {
+          name: params.name,
+          format: params.format,
+          options,
+        });
+        return textResult(`Created property "${params.name}" with key ${key}.`);
+      } catch (err) {
+        return textResult(`anytype_create_property failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const listTypes = defineTool({
+    name: "anytype_list_types",
+    label: "List Anytype types",
+    description:
+      "List the object types available in the current Anytype space (page, note, task, …), each with its key and name.",
+    promptSnippet: "anytype_list_types — list the object types defined in the space",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const types = await api.listTypes(spaceId);
+        if (types.length === 0) return textResult("The space defines no types.");
+        const lines = types.map((t) => `${t.name || "(unnamed)"} — ${t.key}`);
+        return textResult(`${types.length} type(s) in the space:\n${lines.join("\n")}`);
+      } catch (err) {
+        return textResult(`anytype_list_types failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const createCollection = defineTool({
+    name: "anytype_create_collection",
+    label: "Create Anytype collection",
+    description:
+      "Create a new collection in the current space, optionally seeded with existing object ids. Returns the new collection id.",
+    promptSnippet: "anytype_create_collection — create a collection, optionally with object ids",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      name: Type.String({ description: "The collection name." }),
+      items: Type.Optional(
+        Type.Array(Type.String(), { description: "Object ids to include in the collection." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const { id } = await api.createCollection(spaceId, { name: params.name, items: params.items });
+        return textResult(`Created collection "${params.name}" with id ${id}.`);
+      } catch (err) {
+        return textResult(`anytype_create_collection failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  const uploadFile = defineTool({
+    name: "anytype_upload_file",
+    label: "Upload a file to Anytype",
+    description:
+      "Upload a file into the current space, either from a remote URL or from a local file path. Returns the new file object id. Provide at least one of `url` or `path`.",
+    promptSnippet: "anytype_upload_file — upload a file (from url or local path) into the space",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      url: Type.Optional(Type.String({ description: "A remote http(s) URL to fetch and upload." })),
+      path: Type.Optional(Type.String({ description: "A local file path to upload." })),
+      name: Type.Optional(Type.String({ description: "Optional filename to store as." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        if (!params.url && !params.path) {
+          return textResult("anytype_upload_file: provide a `url` or a `path`.");
+        }
+        const { id } = await api.uploadFile(spaceId, {
+          url: params.url,
+          path: params.path,
+          name: params.name,
+        });
+        return textResult(`Uploaded file with id ${id}.`);
+      } catch (err) {
+        return textResult(`anytype_upload_file failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
+  return [
+    listObjects,
+    search,
+    readObject,
+    downloadImages,
+    cropImage,
+    createNote,
+    updateObject,
+    deleteObject,
+    setProperty,
+    listProperties,
+    createProperty,
+    listTypes,
+    createCollection,
+    uploadFile,
+  ] as ToolDefinition[];
 }
