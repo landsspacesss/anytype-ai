@@ -14,7 +14,7 @@ import { DEFAULT_INTERRUPT_POLICY } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
 import { DEFAULT_WATCH_CRON } from "../watch/store.js";
-import { createAnytypeTools, resolveSpaceId } from "./anytype-tools.js";
+import { createAnytypeTools } from "./anytype-tools.js";
 import { SubagentRegistry } from "./subagents.js";
 import type { ChildAgent } from "./subagents.js";
 import { SAFE_TOOLS, needsApproval, type ApprovalMode, type ApprovalGate } from "./approval.js";
@@ -287,8 +287,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       }),
       ...(model ? { model: model as never } : {}),
     });
-    // Children are read-only when the parent is readonly, or when explicitly asked.
-    if (child.readOnly || approvalMode === "readonly") {
+    // Explicit readOnly wins; otherwise a child inherits the parent's read-only mode.
+    const wantReadonly = child.readOnly ?? (approvalMode === "readonly");
+    if (wantReadonly) {
       childSession.setActiveToolsByName([...SAFE_TOOLS]);
     }
     let collected = "";
@@ -322,10 +323,16 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
    */
   const runInSpace = async (space: string, task: string): Promise<string> => {
     if (!opts.agentWorkspaceRoot) throw new Error("runInSpace: agentWorkspaceRoot not set");
-    const spaceId = await resolveSpaceId(opts.api, space, opts.spaceId);
+    const target = (space ?? "").trim();
+    if (target.length === 0) throw new Error("runInSpace: `space` is required");
+    const spaces = await opts.api.listSpaces();
+    const spaceId =
+      spaces.some((s) => s.id === target) ? target :
+      spaces.find((s) => (s.name ?? "").toLowerCase() === target.toLowerCase())?.id;
+    if (!spaceId) throw new Error(`runInSpace: space not found: ${target}`);
     const cwd = path.join(opts.agentWorkspaceRoot, spaceId);
     ensureAgentFiles(cwd); // seed that space's AGENTS.md/MEMORY.md contract
-    const a = await createChildAgent({ spaceId, cwd });
+    const a = await createChildAgent({ spaceId, cwd, readOnly: false });
     try {
       return await a.prompt(task);
     } finally {
