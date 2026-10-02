@@ -220,6 +220,24 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 ---
 
+## 默认技能
+
+镜像内置 **7 个默认 pi 技能**（源码在 `docker/skills/`，启动时由 `ensureSkillsConfig` 拷进 pi 的 agent 目录）。技能是**模型自动触发**的——bot 从每个技能的 `description` 判断当前任务是否匹配，匹配就自己选用；你也可以**点名**（如「用 pdf-to-note 把附件整理成笔记」）。
+
+| 技能 | 作用 |
+|---|---|
+| `fix-image-orientation` | 修 EXIF 横躺的图（下载→摆正→重传→换图块）|
+| `pdf-to-note` | 给个 PDF/docx/txt → 结构化笔记 |
+| `research-note` | 「研究/查一下 X 并存成笔记」→ 带来源链接的笔记 |
+| `extract-todos` | 从某页抽待办（`- [ ]` 复选框）|
+| `generate-quiz` | 从某页生成测验/抽认卡 |
+| `spreadsheet-to-note` | .xlsx/.csv → Markdown 表格笔记（**不支持** .xls 老格式）|
+| `creating-skills` | meta：教 bot 按 Agent Skills 规范写新 `SKILL.md` |
+
+**加一个技能** = 在 `docker/skills/<名字>/SKILL.md` 写好，然后 **rebuild 镜像**。注意 `ensureSkillsConfig` **只拷 `SKILL.md`**——技能目录里的**其它文件不会进容器**，所以脚本/模板要**内联进 `SKILL.md`**（或用其它方式带进镜像）。
+
+---
+
 ## 7. 审批模式（auto / ask / readonly）
 
 `/yolo` 控制**每个聊天**的审批模式（新会话的默认值由 `APPROVAL_MODE` 决定，默认 `auto`）。三种模式：
