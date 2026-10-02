@@ -9,9 +9,8 @@ import {
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
-import { CONSOLE_TOOLS, effectiveToolNames } from "../src/agent/pi-session.js";
+import { CONSOLE_TOOLS, effectiveToolNames, buildSessionResourceLoader } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
-import { DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
 // checked by tsc; it runs for free at test time because the module is imported.
@@ -127,26 +126,23 @@ describe("effectiveToolNames (3 modes)", () => {
   });
 });
 
-describe("resourceLoader reload (approval gate wiring)", () => {
-  // Regression guard: createAgentSession only calls reload() on a loader it
-  // builds itself. pi-session builds its own loader to attach the tool_call
-  // gate, so it MUST reload() before handing it over — a never-reloaded loader
-  // reports zero extensions and registers no hook, silently killing the whole
-  // ask-mode gate (and dropping the system prompt / AGENTS.md context).
-  // `noExtensions: true` isolates the inline factory from on-disk extensions,
-  // so the count is deterministic regardless of the host machine.
-  it("registers an inline extension factory only after reload()", async () => {
-    const loader = new DefaultResourceLoader({
+describe("buildSessionResourceLoader (approval gate wiring)", () => {
+  // Regression guard for the REAL production builder: the SDK uses a
+  // caller-supplied loader AS-IS (it only auto-reloads a loader it builds
+  // itself), so buildSessionResourceLoader must `await reload()`. Deleting that
+  // reload empties getExtensions() and makes this test fail — which is exactly
+  // the bug we shipped once.
+  it("reloads so the inline extension (and its tool_call hook) register", async () => {
+    const loader = await buildSessionResourceLoader({
       cwd: process.cwd(),
-      agentDir: getAgentDir(),
-      noExtensions: true,
       extensionFactories: [(pi) => { pi.on("tool_call", () => undefined); }],
     });
-    expect(loader.getExtensions().extensions.length).toBe(0);
-    await loader.reload();
-    const exts = loader.getExtensions().extensions;
-    expect(exts.length).toBeGreaterThanOrEqual(1);
+    // Identify OUR inline factory by its synthetic path (disk extensions have
+    // real file paths); this makes the assertion independent of whatever
+    // extensions happen to exist on the host.
+    const inline = loader.getExtensions().extensions.find((e) => e.path.startsWith("<inline:"));
+    expect(inline).toBeDefined();
     // The tool_call hook IS the gate — assert it actually registered.
-    expect(exts[0]?.handlers.get("tool_call")?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(inline?.handlers.get("tool_call")?.length ?? 0).toBeGreaterThanOrEqual(1);
   });
 });

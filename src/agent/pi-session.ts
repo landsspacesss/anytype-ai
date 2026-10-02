@@ -8,7 +8,7 @@ import {
   createAgentSession,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { InterruptPolicy, ManagedClient, ProgressCallback } from "../session/manager.js";
 import { DEFAULT_INTERRUPT_POLICY } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
@@ -197,6 +197,26 @@ function resolveModel(registry: ModelRegistry, modelId: string): unknown | undef
 }
 
 /**
+ * Build the resource loader for a session. Caller-supplied loaders are used
+ * AS-IS by the SDK — it only auto-reloads a loader it creates itself — so we
+ * MUST await reload() here or the extension (the approval gate) never registers
+ * and the system prompt / AGENTS.md are dropped.
+ */
+export async function buildSessionResourceLoader(opts: {
+  cwd: string;
+  agentDir?: string;
+  extensionFactories: ExtensionFactory[];
+}): Promise<DefaultResourceLoader> {
+  const loader = new DefaultResourceLoader({
+    cwd: opts.cwd,
+    agentDir: opts.agentDir ?? getAgentDir(),
+    extensionFactories: opts.extensionFactories,
+  });
+  await loader.reload();
+  return loader;
+}
+
+/**
  * Build a ManagedClient backed by an in-process pi SDK AgentSession.
  *
  * Replaces the old omp subprocess: no RPC framing, no `ready` handshake, and
@@ -309,17 +329,14 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     });
   };
 
-  // A caller-supplied resourceLoader is used AS-IS: createAgentSession only
-  // calls `reload()` on a loader it builds itself. Without an explicit reload
-  // the extension factories never register (the approval gate would be dead)
-  // AND getSystemPrompt()/getAgentsFiles() stay empty (system prompt +
-  // AGENTS.md silently dropped). So build it, reload it, then hand it over.
-  const resourceLoader = new DefaultResourceLoader({
+  // The loader MUST be built + reloaded before handing it to createAgentSession
+  // (a caller-supplied loader is used as-is and never auto-reloaded) — see
+  // buildSessionResourceLoader.
+  const resourceLoader = await buildSessionResourceLoader({
     cwd: opts.cwd,
-    agentDir: opts.agentDir ?? getAgentDir(),
+    agentDir: opts.agentDir,
     extensionFactories: [approvalExtension],
   });
-  await resourceLoader.reload();
 
   const { session } = await createAgentSession({
     cwd: opts.cwd,
