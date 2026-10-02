@@ -22,7 +22,7 @@ description: Use when the user wants to create a new skill, turn a procedure int
 ## 放哪 / 怎么生效
 
 - 本 bot 的技能**随镜像**分发：`docker/skills/<name>/SKILL.md`。启动时 `ensureSkillsConfig` 把 `<name>/SKILL.md` 拷进 pi 的 agentDir `skills/`（**只拷 SKILL.md，不拷子目录**）。
-- 改完要 `docker build` + 重建 bot 才生效。
+- ⚠️ **新增**技能 rebuild 即可；**修改**一个已部署过的技能，rebuild **不会**覆盖（启动时只补缺、不覆盖），需先删掉容器卷里的旧副本：`docker exec anytype-ai-bot-1 rm -rf /root/.pi/agent/skills/<name>` 再重建。
 - 也可直接放 `<agentDir>/skills/<name>/SKILL.md`（即时生效，但不随镜像走）。
 
 ## 好技能的要点

@@ -23,16 +23,30 @@ description: Use when the user gives you a .xlsx or .csv file (chat attachment, 
 ## 解析脚本（内联，标准库）
 
 ```python
-import csv, sys, zipfile, xml.etree.ElementTree as ET
-NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+import csv, sys, re, zipfile, xml.etree.ElementTree as ET
+NS  = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+RNS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+PKG = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+def esc(s):
+    return str(s).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 def md_table(rows):
-    rows = [["" if c is None else str(c) for c in r] for r in rows]
+    rows = [[esc("" if c is None else c) for c in r] for r in rows]
     if not rows: return ""
-    out = ["| " + " | ".join(rows[0]) + " |", "| " + " | ".join(["---"]*len(rows[0])) + " |"]
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    out = ["| " + " | ".join(rows[0]) + " |", "| " + " | ".join(["---"] * width) + " |"]
     for r in rows[1:]:
         out.append("| " + " | ".join(r) + " |")
     return "\n".join(out)
+
+def col_index(ref):
+    m = re.match(r"([A-Z]+)", ref or "")
+    if not m: return None
+    n = 0
+    for ch in m.group(1): n = n * 26 + (ord(ch) - 64)
+    return n - 1
 
 def read_csv(path):
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
@@ -42,33 +56,45 @@ def read_xlsx(path):
     z = zipfile.ZipFile(path)
     ss = []
     if "xl/sharedStrings.xml" in z.namelist():
-        sst = ET.fromstring(z.read("xl/sharedStrings.xml"))
-        ss = ["".join(t.text or "" for t in si.iter(NS+"t")) for si in sst]
-    books = {}
-    wbx = ET.fromstring(z.read("xl/workbook.xml"))
-    for sh in wbx.iter(NS+"sheet"):
-        books[sh.get("name")] = sh.get("sheetId")
-    sheets = sorted(n for n in z.namelist() if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"))
-    result = []
-    for i, sname in enumerate(sheets):
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(NS + "si"):
+            ss.append("".join(t.text or "" for t in si.iter(NS + "t")))
+    rels = {}
+    if "xl/_rels/workbook.xml.rels" in z.namelist():
+        for rel in ET.fromstring(z.read("xl/_rels/workbook.xml.rels")).iter(PKG + "Relationship"):
+            rels[rel.get("Id")] = rel.get("Target")
+    out = []
+    for sh in ET.fromstring(z.read("xl/workbook.xml")).iter(NS + "sheet"):
+        target = rels.get(sh.get(RNS + "id"), "")
+        if not target: continue
+        if not target.startswith("xl/"): target = "xl/" + target.lstrip("/")
         rows = []
-        for row in ET.fromstring(z.read(sname)).iter(NS+"row"):
+        for row in ET.fromstring(z.read(target)).iter(NS + "row"):
             cells = []
-            for c in row.iter(NS+"c"):
-                v = c.find(NS+"v"); val = v.text if v is not None else ""
-                if c.get("t") == "s" and val != "": val = ss[int(val)]
-                cells.append(val)
+            for c in row.iter(NS + "c"):
+                idx = col_index(c.get("r"))
+                if idx is None: idx = len(cells)
+                while len(cells) < idx: cells.append("")   # fill skipped (empty) cells
+                v = c.find(NS + "v"); val = v.text if v is not None else ""
+                if c.get("t") == "s" and val not in (None, ""):
+                    try: val = ss[int(val)]
+                    except (ValueError, IndexError): pass
+                cells.append(val if val is not None else "")
             rows.append(cells)
-        title = list(books.keys())[i] if i < len(books) else sname
-        result.append((title, rows))
-    return result
+        out.append((sh.get("name"), rows))
+    return out
 
 path = sys.argv[1]
-if path.lower().endswith(".csv"):
-    print("## " + path.split("/")[-1]); print(md_table(read_csv(path)))
-else:
-    for title, rows in read_xlsx(path):
-        print(f"## {title}"); print(md_table(rows[:200])); print()
+try:
+    if path.lower().endswith(".csv"):
+        print("# " + path.split("/")[-1]); print(md_table(read_csv(path)))
+    else:
+        for title, rows in read_xlsx(path):
+            print(f"## {title}"); print(md_table(rows[:200]))
+            if len(rows) > 200: print(f"（已截断，共 {len(rows)} 行）")
+            print()
+except zipfile.BadZipFile:
+    print("不是有效的 .xlsx（可能是老的 .xls 或损坏文件）——请另存为 .xlsx 或 .csv。", file=sys.stderr)
+    sys.exit(2)
 ```
 
 **用法**：把上面存成 `/tmp/x2md.py`，然后 `bash`：`python3 /tmp/x2md.py <表路径>`。

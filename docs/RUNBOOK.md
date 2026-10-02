@@ -236,6 +236,8 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 **加一个技能** = 在 `docker/skills/<名字>/SKILL.md` 写好，然后 **rebuild 镜像**。注意 `ensureSkillsConfig` **只拷 `SKILL.md`**——技能目录里的**其它文件不会进容器**，所以脚本/模板要**内联进 `SKILL.md`**（或用其它方式带进镜像）。
 
+> ⚠️ **新增**技能 rebuild 即可；**修改**一个已部署过的技能，rebuild **不会**覆盖（启动时只补缺、不覆盖），需先删掉容器卷里的旧副本：`docker exec anytype-ai-bot-1 rm -rf /root/.pi/agent/skills/<name>` 再重建。
+
 ---
 
 ## 7. 审批模式（auto / ask / readonly）
