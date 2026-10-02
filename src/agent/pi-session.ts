@@ -668,6 +668,9 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
         pendingInterrupt = true;
       }
     },
+    // Surface the space-bound one-shot worker to callers outside this module
+    // (the workflow engine's `agent` steps); consoles use it via the tool.
+    runInSpace,
   };
 }
 

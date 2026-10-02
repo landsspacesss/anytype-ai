@@ -295,6 +295,32 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
     expect(cfg.consoleSpaceId).toBeUndefined();
   });
+  it("defaults workflow dirs and reads WORKFLOW_* env", () => {
+    // Defaults: /app/workflows, <agentWorkspaceRoot>/workflow-runs, no board chat.
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.workflowDir).toBe("/app/workflows");
+    expect(dflt.workflowRunDir).toBe("/workspace/workflow-runs");
+    expect(dflt.workflowStatusChat).toBeUndefined();
+
+    // The run dir follows AGENT_WORKSPACE_ROOT when that is set.
+    const root = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",
+      AGENT_WORKSPACE_ROOT: "/data",
+    } as NodeJS.ProcessEnv);
+    expect(root.workflowRunDir).toBe("/data/workflow-runs");
+
+    // Explicit overrides win; WORKFLOW_STATUS_CHAT is surfaced when set.
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",
+      WORKFLOW_DIR: "/flows", WORKFLOW_RUN_DIR: "/runs", WORKFLOW_STATUS_CHAT: "ch9",
+    } as NodeJS.ProcessEnv);
+    expect(custom.workflowDir).toBe("/flows");
+    expect(custom.workflowRunDir).toBe("/runs");
+    expect(custom.workflowStatusChat).toBe("ch9");
+  });
+
   it("parses APPROVAL_TIMEOUT_MS and APPROVAL_MODE", () => {
     const cfg = loadConfig({
       ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",

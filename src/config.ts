@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Config } from "./types.js";
 import type { ApprovalMode } from "./agent/approval.js";
 
@@ -72,5 +73,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       const v = (env.APPROVAL_MODE ?? "").trim().toLowerCase();
       return v === "ask" || v === "readonly" || v === "auto" ? v : "auto";
     })(),
+    // Workflow definitions ship in the image (default /app/workflows); per-run
+    // state goes under the workspace root so it survives in the mounted volume.
+    workflowDir: env.WORKFLOW_DIR || "/app/workflows",
+    workflowRunDir: env.WORKFLOW_RUN_DIR || path.join(env.AGENT_WORKSPACE_ROOT || "/workspace", "workflow-runs"),
+    workflowStatusChat: env.WORKFLOW_STATUS_CHAT || undefined,
   };
 }

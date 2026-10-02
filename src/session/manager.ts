@@ -68,6 +68,8 @@ export interface ManagedClient {
   getInterruptPolicy?(): InterruptPolicy;
   /** Apply the current policy to the running turn (no-op when idle). */
   requestInterrupt?(): Promise<void>;
+  /** Run a one-shot child agent bound to `space` (id or name); throws if unknown. Console/engine use. */
+  runInSpace?(space: string, task: string): Promise<string>;
 }
 
 /** One queued agent turn; `resolve` carries the reply ("" when superseded). */

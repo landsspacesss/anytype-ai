@@ -80,4 +80,10 @@ export interface Config {
   approvalTimeoutMs: number;
   /** Default approval mode for new (non-console) sessions (env APPROVAL_MODE). Default "auto". */
   approvalMode: ApprovalMode;
+  /** Dir holding workflow definitions (env WORKFLOW_DIR). Default /app/workflows. */
+  workflowDir: string;
+  /** Dir holding per-run state/logs (env WORKFLOW_RUN_DIR). Default <agentWorkspaceRoot>/workflow-runs. */
+  workflowRunDir: string;
+  /** Chat id for the workflow-status board (env WORKFLOW_STATUS_CHAT). Unset -> no board. */
+  workflowStatusChat?: string;
 }

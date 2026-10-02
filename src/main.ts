@@ -15,6 +15,10 @@ import { Router } from "./router/router.js";
 import { shouldTrigger, stripBotMention } from "./router/rules.js";
 import { parseCommand } from "./commands/parse.js";
 import { handleCommand, type CommandContext } from "./commands/handler.js";
+import { WorkflowRunStore } from "./workflow/store.js";
+import { runWorkflow, type RunEvent } from "./workflow/runner.js";
+import { findWorkflow, listWorkflows, loadWorkflow } from "./workflow/registry.js";
+import type { StepContext } from "./workflow/steps.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
@@ -245,6 +249,72 @@ async function main(): Promise<void> {
         const stripped = stripBotMention(e.text, cfg.botDisplayName) || e.text;
         const parsed = parseCommand(stripped);
         if (parsed) {
+          const runStore = new WorkflowRunStore(cfg.workflowRunDir);
+          // Build a StepContext for the chat that TRIGGERED a run: its `agent`
+          // steps run one-shot children bound to each step's target space, via
+          // the same runInSpace the console worker uses (strict resolve; unknown
+          // -> throw).
+          const stepCtxFor = (chatId: string): StepContext => ({
+            api,
+            spaceId: chatTargets.get(chatId)?.spaceId ?? "",
+            workspaceDir: cfg.agentWorkspaceRoot,
+            runAgent: async (space, prompt) => {
+              const c = await sessions.ensure(chatId);
+              if (!c.runInSpace) throw new Error("runInSpace unavailable on client");
+              return c.runInSpace(space, prompt);
+            },
+          });
+          function formatRunEvent(e: RunEvent): string {
+            const head = `▶ ${e.runId} ${e.name}`;
+            switch (e.status) {
+              case "run-start": return `${head} · 开始`;
+              case "running": return e.stepId ? `▶ ${e.stepId} …` : head;
+              case "skipped": return `⏭ ${e.stepId}`;
+              case "failed": return `❌ ${e.stepId}: ${e.detail ?? ""}`;
+              case "done": return e.stepId ? `✅ ${e.stepId}${e.detail ? ` → ${e.detail.split(/\r?\n/)[0].slice(0, 120)}` : ""}` : `${head} · ✅ 完成`;
+              default: return `${head} · ${e.status}`;
+            }
+          }
+          // Lifecycle events go to the status board ONLY when WORKFLOW_STATUS_CHAT
+          // is set AND that chat was discovered (so we know its space). No auto-create.
+          const emitRun = (e: RunEvent): void => {
+            const chatId = cfg.workflowStatusChat;
+            if (!chatId) return;
+            const spaceId = chatTargets.get(chatId)?.spaceId;
+            if (!spaceId) return;
+            void api.sendMessage(spaceId, chatId, formatRunEvent(e), `wf-${e.runId}-${e.stepId ?? e.status}-${++sendSeq}`).catch((err) => console.warn(`workflow status post failed: ${String(err)}`));
+          };
+          const doRun = async (chatId: string, name: string, args: string, resumeRunId?: string): Promise<{ ok: boolean; message: string }> => {
+            const entry = findWorkflow(cfg.workflowDir, name);
+            if (!entry) {
+              const avail = listWorkflows(cfg.workflowDir).map((e) => e.name).join(", ") || "无";
+              return { ok: false, message: `未知工作流：${name}（可用：${avail}）` };
+            }
+            try {
+              const def = loadWorkflow(entry);
+              const spaceId = chatTargets.get(chatId)?.spaceId ?? "";
+              const state = await runWorkflow(def, {
+                store: runStore, ctx: stepCtxFor(chatId), chatId, spaceId,
+                trigger: resumeRunId ? "resume" : "manual",
+                ...(resumeRunId ? { resumeRunId } : {}),
+                emit: emitRun,
+                scope: { env: {} },
+              });
+              return { ok: state.status === "done", message: `工作流 ${name} ${state.status === "done" ? "✅ 完成" : "❌ " + state.status}（run ${state.id}）` };
+            } catch (err) {
+              return { ok: false, message: `工作流失败：${err instanceof Error ? err.message : String(err)}` };
+            }
+          };
+          const listRuns = (): { id: string; name: string; status: string; when: string }[] => {
+            try {
+              return fs.readdirSync(cfg.workflowRunDir)
+                .map((id) => runStore.load(id))
+                .filter((s): s is NonNullable<typeof s> => !!s)
+                .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+                .slice(0, 10)
+                .map((s) => ({ id: s.id, name: s.name, status: s.status, when: s.createdAt }));
+            } catch { return []; }
+          };
           const ctx: CommandContext = {
             chatId: e.chatId,
             getClient: () => sessions.get(e.chatId),
@@ -263,6 +333,8 @@ async function main(): Promise<void> {
             getApprovalMode: () => sessions.getApprovalMode(e.chatId),
             setApprovalMode: (mode) => sessions.setApprovalMode(e.chatId, mode),
             approvePending: (kind) => sessions.approvePending(e.chatId, kind),
+            runWorkflow: (name, args, resumeRunId) => doRun(e.chatId, name, args, resumeRunId),
+            listRuns: () => listRuns(),
             isConsole: isConsoleSpace(e.spaceId),
             getConsoleUnlocked: () => sessions.getConsoleUnlocked(e.chatId),
             setConsoleUnlocked: (on) => sessions.setConsoleUnlocked(e.chatId, on),
