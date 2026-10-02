@@ -160,12 +160,17 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_create_collection` | 建**集合**（把对象归类到一起）|
 | `anytype_collection_items` | 给集合**加/移**对象 |
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
-| `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查，内容一变就在这里**通知**（`action: add/remove/list/schedule/check`）|
+| `anytype_insert_markdown` | **精确插入** Markdown 到对象（`before`/`after` 指定位置或 `position` 首/尾；支持表格等）|
+| `anytype_templates` | 模板**列/建/删**（`action: list/create/delete`）；`anytype_create_note` 可带 `template_id` 套用 |
+| `anytype_send_message` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / 加 emoji 反应 / 改 / 删消息 |
+| `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
 
 > **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
 >
 > **订阅按 cron 计划检查**——每个订阅有自己的 5 段 cron（分 时 日 月 周，**本地时区**），调度器每 `WATCH_TICK_MS`（默认 60 秒）tick 一次，只检查当前分钟命中的订阅。因为是 Anytype **没有对象变更事件流**，所以仍是「到点拉取 + diff」。新订阅默认 `WATCH_DEFAULT_CRON`（`*/30 * * * *`）。订阅记录存在 `/workspace/watches.json`，重启不丢。**取不到订阅对象时不会贸然退订**——先调对象列表确认是否真的没了，只有连续 `WATCH_MAX_MISSES`（默认 3）次确认不在列表里才退订；纯网络抖动会保留订阅。
+
+> **订阅可带指令（重点）**：订阅时给 `prompt`（如 `总结这篇文章的变化`、`检查未完成待办并提醒我`），cron 命中且检测到变化时，AI 会**自己去读该对象、按指令处理**，把结果发回聊天——不是干巴巴地念 diff。典型用法：**`订阅"日常试卷1"，每天9点总结一下变化`**。
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
 
