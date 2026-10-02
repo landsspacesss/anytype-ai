@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleCommand, HELP_TEXT, type CommandContext } from "../src/commands/handler.js";
-import type { ManagedClient } from "../src/session/manager.js";
+import type { InterruptPolicy, ManagedClient } from "../src/session/manager.js";
 
 /** A fake ManagedClient whose control ops are spies; prompt/close/abort are no-ops. */
 function fakeClient(overrides: Partial<ManagedClient> = {}) {
@@ -22,17 +22,24 @@ function fakeClient(overrides: Partial<ManagedClient> = {}) {
   return client;
 }
 
-function ctx(client: ManagedClient | undefined) {
+function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step") {
   const ensure = vi.fn(async () => client ?? fakeClient());
   const reset = vi.fn(async () => {});
+  let current: InterruptPolicy = policy;
+  const setInterruptPolicy = vi.fn(async (p: InterruptPolicy) => {
+    current = p;
+    return p;
+  });
   const context: CommandContext = {
     chatId: "c1",
     getClient: () => client,
     ensureClient: ensure,
     reset,
     defaultModel: "deepseek-flash",
+    getInterruptPolicy: () => current,
+    setInterruptPolicy,
   };
-  return { context, ensure, reset };
+  return { context, ensure, reset, setInterruptPolicy, getPolicy: () => current };
 }
 
 describe("handleCommand", () => {
@@ -138,11 +145,41 @@ describe("handleCommand", () => {
     expect(reply).toContain("开");
   });
 
+  it("/interrupt with no arg reports the current policy (default step)", async () => {
+    const { context, setInterruptPolicy } = ctx(fakeClient());
+    const reply = await handleCommand("interrupt", "", context);
+    expect(reply).toContain("等这一步结束");
+    expect(setInterruptPolicy).not.toHaveBeenCalled();
+  });
+
+  it("/interrupt now sets the immediate policy", async () => {
+    const { context, setInterruptPolicy, getPolicy } = ctx(fakeClient());
+    const reply = await handleCommand("interrupt", "now", context);
+    expect(setInterruptPolicy).toHaveBeenCalledWith("immediate");
+    expect(getPolicy()).toBe("immediate");
+    expect(reply).toContain("立刻打断");
+  });
+
+  it("/interrupt step switches back from immediate", async () => {
+    const { context, setInterruptPolicy, getPolicy } = ctx(fakeClient(), "immediate");
+    const reply = await handleCommand("interrupt", "step", context);
+    expect(setInterruptPolicy).toHaveBeenCalledWith("step");
+    expect(getPolicy()).toBe("step");
+    expect(reply).toContain("等这一步结束");
+  });
+
+  it("/interrupt bogus is rejected without changing the policy", async () => {
+    const { context, setInterruptPolicy } = ctx(fakeClient());
+    const reply = await handleCommand("interrupt", "bogus", context);
+    expect(setInterruptPolicy).not.toHaveBeenCalled();
+    expect(reply).toMatch(/用法/);
+  });
+
   it("/help lists the commands", async () => {
     const { context } = ctx(fakeClient());
     const reply = await handleCommand("help", "", context);
     expect(reply).toBe(HELP_TEXT);
-    for (const c of ["/new", "/clear", "/compact", "/model", "/effort", "/yolo", "/help"]) {
+    for (const c of ["/new", "/clear", "/compact", "/model", "/effort", "/yolo", "/interrupt", "/help"]) {
       expect(reply).toContain(c);
     }
   });
@@ -157,5 +194,12 @@ describe("handleCommand", () => {
     const { context } = ctx(undefined);
     await expect(handleCommand("model", "", context)).resolves.toContain("deepseek-flash");
     await expect(handleCommand("yolo", "", context)).resolves.toMatch(/开/);
+  });
+
+  it("/interrupt works with no live client (read + write)", async () => {
+    const { context, getPolicy } = ctx(undefined);
+    await expect(handleCommand("interrupt", "", context)).resolves.toContain("打断策略");
+    await expect(handleCommand("interrupt", "now", context)).resolves.toContain("立刻打断");
+    expect(getPolicy()).toBe("immediate");
   });
 });

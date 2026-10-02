@@ -1,4 +1,4 @@
-import type { ManagedClient } from "../session/manager.js";
+import type { InterruptPolicy, ManagedClient } from "../session/manager.js";
 
 /** Everything a command needs: the chat's client + a way to reset its session. */
 export interface CommandContext {
@@ -12,10 +12,22 @@ export interface CommandContext {
   reset(): Promise<void>;
   /** Model id to report when no live client / model is available. */
   defaultModel: string;
+  /** The chat's current interrupt policy. */
+  getInterruptPolicy(): InterruptPolicy;
+  /**
+   * Set the chat's interrupt policy and apply it immediately — a turn that is
+   * already running is interrupted per the new policy.
+   */
+  setInterruptPolicy(policy: InterruptPolicy): Promise<InterruptPolicy>;
 }
 
 /** Thinking levels `/effort` accepts (pi clamps to what the model supports). */
 const EFFORT_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/** Human-readable label for an interrupt policy. */
+export function interruptLabel(p: InterruptPolicy): string {
+  return p === "immediate" ? "立刻打断" : "等这一步结束";
+}
 
 export const HELP_TEXT = [
   "可用指令：",
@@ -25,6 +37,7 @@ export const HELP_TEXT = [
   "/model [名称] — 查看或切换本对话的模型",
   "/effort [low|medium|high|max] — 查看或设置思考级别",
   "/yolo [on|off] — 开关 YOLO 自动模式（默认开）",
+  "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
   "/help — 显示本帮助",
 ].join("\n");
 
@@ -99,6 +112,21 @@ export async function handleCommand(
       if (!live.setAutoTools) return "当前会话不支持自动模式切换。";
       const status = live.setAutoTools(target);
       return status;
+    }
+
+    case "interrupt": {
+      if (!args) {
+        return `打断策略：${interruptLabel(ctx.getInterruptPolicy())}（用 /interrupt now|step 修改）`;
+      }
+      const arg = args.toLowerCase();
+      let policy: InterruptPolicy | undefined;
+      if (arg === "now" || arg === "immediate" || arg === "立刻") policy = "immediate";
+      else if (arg === "step" || arg === "wait" || arg === "等") policy = "step";
+      if (!policy) {
+        return "用法：/interrupt [now|step]（now=立刻打断，step=等当前这一步结束）";
+      }
+      const applied = await ctx.setInterruptPolicy(policy);
+      return `打断策略已设为：${interruptLabel(applied)}（立即生效）`;
     }
 
     case "help":

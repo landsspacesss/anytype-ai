@@ -6,7 +6,8 @@ import {
   SessionManager,
   createAgentSession,
 } from "@earendil-works/pi-coding-agent";
-import type { ManagedClient, ProgressCallback } from "../session/manager.js";
+import type { InterruptPolicy, ManagedClient, ProgressCallback } from "../session/manager.js";
+import { DEFAULT_INTERRUPT_POLICY } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
 import { DEFAULT_WATCH_CRON } from "../watch/store.js";
@@ -58,6 +59,8 @@ export interface PiClientOptions {
    * after `/new` so the new conversation does not recall old history.
    */
   resume?: boolean;
+  /** How an in-flight turn reacts to a newer message. Default `step`. */
+  interruptPolicy?: InterruptPolicy;
 }
 
 /** Tool names kept when YOLO / auto-approve mode is OFF (read-only safety set). */
@@ -75,6 +78,48 @@ export const READONLY_TOOLS: readonly string[] = [
   "web_fetch",
   "anytype_watch",
 ];
+
+/**
+ * Tools safe to abort while they are still executing: pure reads with no side
+ * effects. Everything else is treated as mutating and — under the `step`
+ * interrupt policy — is allowed to finish before the turn is stopped. This is
+ * an allow-list on purpose: a newly added tool defaults to "not safe".
+ */
+export const INTERRUPTIBLE_TOOLS: ReadonlySet<string> = new Set([
+  "read",
+  "ls",
+  "grep",
+  "find",
+  "anytype_list_objects",
+  "anytype_search",
+  "anytype_read_object",
+  "anytype_list_properties",
+  "anytype_list_types",
+]);
+
+/** Whether a tool may be aborted mid-execution. Unknown tools → false. */
+export function isInterruptibleTool(name: string): boolean {
+  return INTERRUPTIBLE_TOOLS.has(name);
+}
+
+/** When to stop a running turn in response to a newer message. */
+export type InterruptDecision = "abort-now" | "after-tool";
+
+/**
+ * Decide when the running turn should stop.
+ * - `immediate` stops right away.
+ * - `step` also stops right away, unless a non-interruptible (write) tool is
+ *   in flight — then it waits for that tool to finish, so no half-written
+ *   object is left behind.
+ */
+export function decideInterrupt(
+  policy: InterruptPolicy,
+  currentTool: { name: string; interruptible: boolean } | null,
+): InterruptDecision {
+  if (policy === "immediate") return "abort-now";
+  if (currentTool && !currentTool.interruptible) return "after-tool";
+  return "abort-now";
+}
 
 /** Where the baked-in custom model registry lives in the image. */
 const MODELS_SRC = "/app/pi/models.json";
@@ -226,6 +271,22 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   // event handler forward tool-call starts to the caller's progress callback.
   // Sub-agents/child sessions never set this, so they are unaffected.
   let currentProgress: ProgressCallback | undefined;
+
+  // --- interrupt state (top-level session only) ---
+  let interruptPolicy: InterruptPolicy = opts.interruptPolicy ?? DEFAULT_INTERRUPT_POLICY;
+  // The tool executing right now, or null while the model is thinking/streaming.
+  let currentTool: { name: string; interruptible: boolean } | null = null;
+  // Set when we must stop as soon as the in-flight (write) tool finishes.
+  let pendingInterrupt = false;
+  // True once an abort was issued during the current turn, so `prompt()` can
+  // return an empty reply rather than a half-finished one.
+  let turnAborted = false;
+
+  const doAbort = async (): Promise<void> => {
+    turnAborted = true;
+    await session.abort();
+  };
+
   const unsubscribe = session.subscribe((e) => {
     if (e.type === "message_update") {
       const ev = e.assistantMessageEvent;
@@ -238,10 +299,17 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       }
     } else if (e.type === "tool_execution_start") {
       if (typeof e.toolName === "string") {
+        currentTool = { name: e.toolName, interruptible: isInterruptibleTool(e.toolName) };
         currentProgress?.({ kind: "tool", tool: e.toolName, args: e.args });
       }
     } else if (e.type === "tool_execution_end") {
       // A tool finished — the model goes back to thinking.
+      currentTool = null;
+      if (pendingInterrupt) {
+        // A newer message arrived while a write tool ran; stop now that it is done.
+        pendingInterrupt = false;
+        void doAbort();
+      }
       currentProgress?.({ kind: "thinking" });
     }
   });
@@ -265,9 +333,12 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     async prompt(m: string, onProgress?: ProgressCallback): Promise<string> {
       collected = "";
       currentProgress = onProgress;
+      turnAborted = false;
+      pendingInterrupt = false;
       try {
         await session.prompt(m);
-        return collected;
+        // A turn that was interrupted yields partial text — drop it.
+        return turnAborted ? "" : collected;
       } finally {
         currentProgress = undefined;
       }
@@ -312,6 +383,21 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     },
     isAutoTools(): boolean {
       return autoTools;
+    },
+    setInterruptPolicy(p: InterruptPolicy): void {
+      interruptPolicy = p;
+    },
+    getInterruptPolicy(): InterruptPolicy {
+      return interruptPolicy;
+    },
+    async requestInterrupt(): Promise<void> {
+      if (!session.isStreaming) return; // nothing running
+      if (decideInterrupt(interruptPolicy, currentTool) === "abort-now") {
+        await doAbort();
+      } else {
+        // Let the in-flight write tool finish; tool_execution_end aborts then.
+        pendingInterrupt = true;
+      }
     },
   };
 }

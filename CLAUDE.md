@@ -79,6 +79,16 @@ Key facts that span multiple files:
   watches once per matching minute, and a watch with a `prompt` runs an agent turn.
 - **The bot resolves its own participant id per space** by matching `BOT_IDENTITY` in
   the member list (participant ids are space-scoped).
+- **Barge-in: a newer message wins.** `SessionManager.run` keeps the executing turn
+  at `entry.turns[0]`; if anything is already in flight it marks every pending turn
+  `superseded` (they resolve `""`, so the Router posts nothing) and calls
+  `client.requestInterrupt()`. The per-chat `InterruptPolicy` decides *when* the
+  running turn stops — `step` (default) aborts now while thinking/reading but waits
+  for an in-flight **write** tool to finish, `immediate` aborts now regardless. The
+  policy lives in `pi-session.ts` (`decideInterrupt` / `isInterruptibleTool`, an
+  allow-list so unknown tools default to "not safe"), and the interrupted turn's
+  `prompt()` returns `""` so no half-written reply is posted. `/interrupt [now|step]`
+  sets it and applies it to the running turn right away.
 
 ## Anytype API gotchas (learned the hard way)
 
@@ -108,6 +118,16 @@ Key facts that span multiple files:
   never invoked in tests.
 - When changing the **event-stream or tool-progress** shapes, update the fakes in
   `test/router.test.ts` and `test/anytype-events.test.ts` accordingly.
+- `SessionManager` tests encode barge-in: a second `run()` for a chat supersedes the
+  first, so the earlier promise resolves `""`. A fake client that wants to emulate a
+  real interrupt implements `requestInterrupt()` and returns `""` from `prompt()`
+  once aborted.
+- `pi-session.ts` is not unit-tested against a live SDK (no provider key in CI) —
+  because of that, `decideInterrupt` / `isInterruptibleTool` are deliberately pure
+  and exported so they *can* be tested. Verify real abort behaviour with a live
+  `docker run` script (see the interruption note above): confirm an interrupted turn
+  yields `""`, that the **next** turn still works, and that `step` lets a `bash
+  sleep N` finish while `immediate` kills it.
 - Live smoke tests (see `docs/superpowers/plans/phase0-findings.md` for verified API
   shapes) must run against a **fresh `docker run` of the new image** — `docker exec`
   into the running container tests the OLD image.

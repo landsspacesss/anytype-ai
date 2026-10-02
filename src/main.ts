@@ -12,7 +12,7 @@ import { sanitize } from "./util/sanitize.js";
 import { Router } from "./router/router.js";
 import { shouldTrigger, stripBotMention } from "./router/rules.js";
 import { parseCommand } from "./commands/parse.js";
-import { handleCommand } from "./commands/handler.js";
+import { handleCommand, type CommandContext } from "./commands/handler.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
@@ -91,6 +91,9 @@ async function main(): Promise<void> {
         subagentIdleMs: cfg.subagentIdleMs,
         chatSessionDir,
         resume: sessions.resumeFor(chatId),
+        // A brand-new client adopts the chat's current interrupt policy, so a
+        // policy set via /interrupt survives an idle-reap/rebuild.
+        interruptPolicy: sessions.getInterruptPolicy(chatId),
       });
     },
   });
@@ -157,12 +160,14 @@ async function main(): Promise<void> {
         const stripped = stripBotMention(e.text, cfg.botDisplayName) || e.text;
         const parsed = parseCommand(stripped);
         if (parsed) {
-          const ctx = {
+          const ctx: CommandContext = {
             chatId: e.chatId,
             getClient: () => sessions.get(e.chatId),
             ensureClient: () => sessions.ensure(e.chatId),
             reset: () => sessions.reset(e.chatId),
             defaultModel: cfg.piModel,
+            getInterruptPolicy: () => sessions.getInterruptPolicy(e.chatId),
+            setInterruptPolicy: (p) => sessions.setInterruptPolicy(e.chatId, p),
           };
           const reply = await handleCommand(parsed.command, parsed.args, ctx);
           if (reply && reply.trim().length > 0) {

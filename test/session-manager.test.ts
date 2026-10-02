@@ -53,7 +53,8 @@ describe("SessionManager", () => {
     const p2 = mgr.run("A", "2");
     const p3 = mgr.run("B", "1");
 
-    expect(await Promise.all([p1, p2, p3])).toEqual(["ok", "ok", "ok"]);
+    // p2 supersedes the in-flight p1 → its reply is muted. p3 is a different chat.
+    expect(await Promise.all([p1, p2, p3])).toEqual(["", "ok", "ok"]);
     expect(events.indexOf("closeA")).toBeGreaterThan(events.indexOf("promptA1"));
     expect(events.indexOf("closeA")).toBeGreaterThan(events.indexOf("promptA2"));
   });
@@ -73,8 +74,9 @@ describe("SessionManager", () => {
     const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
     const p1 = mgr.run("A", "m1");
     const p2 = mgr.run("A", "m2");
-    expect(await Promise.all([p1, p2])).toEqual(["ok", "ok"]);
-    expect(created - closed).toBe(1);
+    const results = await Promise.all([p1, p2]);
+    expect(created - closed).toBe(1);              // no leaked client
+    expect([...results].sort()).toEqual(["", "ok"]); // the newer message wins
   });
 
   it("reapIdle does not close a chat with pending work", async () => {
@@ -96,7 +98,8 @@ describe("SessionManager", () => {
     await mgr.reapIdle();
     expect(closed).toBe(false);
     release();
-    expect(await Promise.all([p1, p2])).toEqual(["ok", "ok"]);
+    // p2 superseded the in-flight p1, so p1's reply is muted.
+    expect(await Promise.all([p1, p2])).toEqual(["", "ok"]);
   });
 
   it("never exceeds maxConcurrent live clients", async () => {
@@ -173,5 +176,71 @@ describe("SessionManager", () => {
     expect(seenResume).toEqual([true, false]);
     expect(mgr.resumeFor("c1")).toBe(true);
     expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
+  it("interrupts the in-flight turn and drops superseded queued turns", async () => {
+    const seen: string[] = [];
+    let aborted = false;
+    let release!: () => void;
+    const interrupted = vi.fn();
+    const createClient = async () => ({
+      get busy() { return true; },
+      prompt(m: string) {
+        seen.push(m);
+        aborted = false;
+        return new Promise<string>((resolve) => {
+          release = () => resolve(aborted ? "" : `r:${m}`);
+        });
+      },
+      async close() {},
+      async abort() {},
+      async requestInterrupt() {
+        interrupted();
+        aborted = true;
+        release();
+      },
+    });
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 1_000_000 });
+
+    const p1 = mgr.run("c", "A"); // A starts and blocks
+    await new Promise(r => setTimeout(r, 0));
+    const p2 = mgr.run("c", "B"); // interrupts A; B is then superseded
+    const p3 = mgr.run("c", "C"); // newest message wins
+    await new Promise(r => setTimeout(r, 0));
+    release();                    // let C finish
+
+    expect(await p1).toBe("");
+    expect(await p2).toBe("");
+    expect(await p3).toBe("r:C");
+    expect(seen).toEqual(["A", "C"]); // B never reached the model
+    expect(interrupted).toHaveBeenCalled();
+  });
+
+  it("setInterruptPolicy remembers the policy and applies it to a live client", async () => {
+    const setPolicy = vi.fn();
+    const requestInterrupt = vi.fn(async () => {});
+    const createClient = vi.fn(async () => ({
+      get busy() { return false; },
+      async prompt() { return "ok"; },
+      async close() {},
+      async abort() {},
+      setInterruptPolicy: setPolicy,
+      requestInterrupt,
+    }));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    expect(mgr.getInterruptPolicy("c1")).toBe("step"); // default
+
+    await mgr.ensure("c1"); // spin up a client
+    expect(setPolicy).toHaveBeenCalledWith("step");
+
+    await mgr.setInterruptPolicy("c1", "immediate");
+    expect(mgr.getInterruptPolicy("c1")).toBe("immediate");
+    expect(setPolicy).toHaveBeenLastCalledWith("immediate");
+    expect(requestInterrupt).toHaveBeenCalled(); // applied to the running turn
+
+    // A later client rebuild re-adopts the remembered policy.
+    await mgr.reset("c1");
+    await mgr.ensure("c1");
+    expect(setPolicy).toHaveBeenLastCalledWith("immediate");
   });
 });

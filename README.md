@@ -27,7 +27,10 @@ running on your own server over your own end-to-end-encrypted network.
   runs your instruction (e.g. "summarize the changes") and posts back.
 - **Sub-agents** — one-shot `subagent`, and persistent named agents (`agent`
   spawn/message/list/kill) you can talk to across turns.
-- **Slash commands** — `/new` `/clear` `/compact` `/model` `/effort` `/yolo` `/help`.
+- **Barge-in** — send another message while it is working and the older one is
+  dropped: the running turn is interrupted so the newest message wins. The
+  default policy never cuts a write (create/update/delete) short.
+- **Slash commands** — `/new` `/clear` `/compact` `/model` `/effort` `/yolo` `/interrupt` `/help`.
 - **Persistent history** — per-chat conversation survives restarts.
 
 ## Architecture — this is a standalone service
