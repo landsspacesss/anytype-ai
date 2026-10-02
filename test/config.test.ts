@@ -295,4 +295,19 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
     expect(cfg.consoleSpaceId).toBeUndefined();
   });
+  it("parses APPROVAL_TIMEOUT_MS and APPROVAL_MODE", () => {
+    const cfg = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k",
+      APPROVAL_TIMEOUT_MS: "60000", APPROVAL_MODE: "ask",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.approvalTimeoutMs).toBe(60000);
+    expect(cfg.approvalMode).toBe("ask");
+  });
+  it("approval defaults: 300000 and auto; bad mode falls back to auto", () => {
+    const cfg = loadConfig({ ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k" } as NodeJS.ProcessEnv);
+    expect(cfg.approvalTimeoutMs).toBe(300000);
+    expect(cfg.approvalMode).toBe("auto");
+    const bad = loadConfig({ ANYTYPE_API_BASE_URL: "http://x", ANYTYPE_API_KEY: "k", APPROVAL_MODE: "nope" } as NodeJS.ProcessEnv);
+    expect(bad.approvalMode).toBe("auto");
+  });
 });

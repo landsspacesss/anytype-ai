@@ -1,3 +1,5 @@
+import type { ApprovalMode } from "./agent/approval.js";
+
 export interface ChatTarget {
   spaceId: string;
   chatId: string;
@@ -74,4 +76,8 @@ export interface Config {
   toolStatus: boolean;
   /** Delay (ms) before the status placeholder is posted (env TOOL_STATUS_DELAY_MS). Default 1500. */
   toolStatusDelayMs: number;
+  /** Pending-approval timeout in ms (env APPROVAL_TIMEOUT_MS). Default 300000; timeout = deny. */
+  approvalTimeoutMs: number;
+  /** Default approval mode for new (non-console) sessions (env APPROVAL_MODE). Default "auto". */
+  approvalMode: ApprovalMode;
 }

@@ -1,4 +1,5 @@
 import type { Config } from "./types.js";
+import type { ApprovalMode } from "./agent/approval.js";
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const v = env[key];
@@ -66,5 +67,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // The delay avoids flashing a placeholder for fast replies.
     toolStatus: env.TOOL_STATUS !== "false",
     toolStatusDelayMs: posInt(env, "TOOL_STATUS_DELAY_MS", 1500),
+    approvalTimeoutMs: posInt(env, "APPROVAL_TIMEOUT_MS", 300000),
+    approvalMode: ((): ApprovalMode => {
+      const v = (env.APPROVAL_MODE ?? "").trim().toLowerCase();
+      return v === "ask" || v === "readonly" || v === "auto" ? v : "auto";
+    })(),
   };
 }
