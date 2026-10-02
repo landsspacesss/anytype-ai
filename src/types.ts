@@ -41,6 +41,10 @@ export interface Config {
   piAgentDir?: string;
   /** Model id to run the agent with (env PI_MODEL). Default: deepseek-flash (V4.1). */
   piModel: string;
+  /** DeepSeek key backing the `web_search` tool (env DEEPSEEK_API_KEY). Default "". */
+  searchApiKey: string;
+  /** Model for the `web_search` tool (env SEARCH_MODEL). Defaults to piModel. */
+  searchModel: string;
   maxConcurrentSessions: number;
   idleReapMs: number;
   replyMaxLen: number;

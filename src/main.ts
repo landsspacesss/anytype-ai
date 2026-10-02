@@ -62,6 +62,8 @@ async function main(): Promise<void> {
         chatId,
         defaultWatchCron: cfg.watchDefaultCron,
         modelId: cfg.piModel,
+        searchApiKey: cfg.searchApiKey,
+        searchModel: cfg.searchModel,
       });
     },
   });

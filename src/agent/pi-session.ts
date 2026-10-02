@@ -29,6 +29,10 @@ export interface PiClientOptions {
   defaultWatchCron?: string;
   /** Model id to use (e.g. "deepseek-flash"). Defaults to pi's own default. */
   modelId?: string;
+  /** DeepSeek key backing the `web_search` tool (env DEEPSEEK_API_KEY). Empty disables it. */
+  searchApiKey?: string;
+  /** Model for the `web_search` tool (env SEARCH_MODEL). Defaults to the search fn's default. */
+  searchModel?: string;
 }
 
 /** Where the baked-in custom model registry lives in the image. */
@@ -89,6 +93,8 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
       store: opts.store,
       chatId: opts.chatId,
       defaultWatchCron: opts.defaultWatchCron ?? DEFAULT_WATCH_CRON,
+      searchApiKey: opts.searchApiKey ?? "",
+      searchModel: opts.searchModel,
     }),
     ...(model ? { model: model as never } : {}),
   });

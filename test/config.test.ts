@@ -109,6 +109,38 @@ describe("loadConfig", () => {
     expect(custom.piModel).toBe("deepseek-v4-pro");
   });
 
+  it("defaults searchApiKey to '' and reads DEEPSEEK_API_KEY", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.searchApiKey).toBe("");
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      DEEPSEEK_API_KEY: "sk-xyz",
+    } as NodeJS.ProcessEnv);
+    expect(custom.searchApiKey).toBe("sk-xyz");
+  });
+
+  it("defaults searchModel to piModel and honors SEARCH_MODEL", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      PI_MODEL: "deepseek-v4-pro",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.searchModel).toBe("deepseek-v4-pro");
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      PI_MODEL: "deepseek-v4-pro",
+      SEARCH_MODEL: "deepseek-flash",
+    } as NodeJS.ProcessEnv);
+    expect(custom.searchModel).toBe("deepseek-flash");
+  });
+
   it("reads BOT_DISPLAY_NAME and defaults to anytype-bot", () => {
     const custom = loadConfig({
       ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",

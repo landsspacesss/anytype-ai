@@ -106,13 +106,14 @@ function mkTools(api: AnytypeClient, store: WatchStore = fakeStore(), chatId: st
     store,
     chatId,
     defaultWatchCron: DEFAULT_CRON,
+    searchApiKey: "",
   });
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the twenty-five Anytype tools with expected names", () => {
+  it("returns the twenty-six tools with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(25);
+    expect(tools).toHaveLength(26);
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
       "anytype_search",
@@ -139,6 +140,7 @@ describe("createAnytypeTools", () => {
       "anytype_delete_message",
       "anytype_templates",
       "anytype_insert_markdown",
+      "web_search",
     ]);
   });
 
@@ -1198,5 +1200,76 @@ describe("createAnytypeTools", () => {
     expect(api.patchObject).toHaveBeenCalledWith(SPACE, "obj1", [
       { op: "insert_blocks", markdown: "body", after: "b2" },
     ]);
+  });
+
+  // --- web search (not Anytype-specific; uses an injected search fn) ---------
+
+  function mkToolsWithSearch(
+    searchFn: unknown,
+    opts: { searchApiKey?: string; searchModel?: string } = {},
+  ) {
+    return createAnytypeTools({
+      api: fakeApi(),
+      spaceId: SPACE,
+      workspaceDir: tmpWorkspace(),
+      store: fakeStore(),
+      chatId: CHAT,
+      defaultWatchCron: DEFAULT_CRON,
+      searchApiKey: opts.searchApiKey ?? "test-key",
+      searchModel: opts.searchModel,
+      searchFn: searchFn as never,
+    });
+  }
+
+  it("web_search renders the answer text and a 来源 list, passing query/model through", async () => {
+    const searchFn = vi.fn(async () => ({
+      text: "今天的科技新闻是……",
+      sources: [
+        { title: "示例来源", url: "https://example.com/a" },
+        { title: "Second", url: "https://example.com/b" },
+      ],
+    }));
+    const tools = mkToolsWithSearch(searchFn, { searchModel: "deepseek-flash" });
+    const res = await run(toolByName(tools, "web_search"), { query: "今天的科技新闻" });
+    const text = res.content[0].text as string;
+    expect(text).toContain("今天的科技新闻是……");
+    expect(text).toContain("来源：");
+    expect(text).toContain("- 示例来源 — https://example.com/a");
+    expect(text).toContain("- Second — https://example.com/b");
+    expect(searchFn).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "test-key", query: "今天的科技新闻", model: "deepseek-flash" }),
+    );
+  });
+
+  it("web_search omits the 来源 section when there are no sources", async () => {
+    const tools = mkToolsWithSearch(vi.fn(async () => ({ text: "just an answer", sources: [] })));
+    const res = await run(toolByName(tools, "web_search"), { query: "q" });
+    const text = res.content[0].text as string;
+    expect(text).toBe("just an answer");
+    expect(text).not.toContain("来源");
+  });
+
+  it("web_search forwards max_uses and surfaces an error as text", async () => {
+    const searchFn = vi.fn(async () => ({ text: "ok", sources: [] }));
+    const tools = mkToolsWithSearch(searchFn);
+    await run(toolByName(tools, "web_search"), { query: "q", max_uses: 7 });
+    expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ maxUses: 7 }));
+
+    const bad = mkToolsWithSearch(
+      vi.fn(async () => {
+        throw new Error("web search failed: 429");
+      }),
+    );
+    const res = await run(toolByName(bad, "web_search"), { query: "q" });
+    expect(res.content[0].text).toContain("web_search failed");
+    expect(res.content[0].text).toContain("429");
+  });
+
+  it("web_search says it is not configured when searchApiKey is empty", async () => {
+    const searchFn = vi.fn(async () => ({ text: "x", sources: [] }));
+    const tools = mkToolsWithSearch(searchFn, { searchApiKey: "" });
+    const res = await run(toolByName(tools, "web_search"), { query: "q" });
+    expect(res.content[0].text).toContain("web search is not configured");
+    expect(searchFn).not.toHaveBeenCalled();
   });
 });

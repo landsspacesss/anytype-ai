@@ -9,6 +9,8 @@ import type { WatchRecord, WatchStore } from "../watch/store.js";
 import { snapshotOf } from "../watch/store.js";
 import { describeCron, parseCron } from "../watch/cron.js";
 import { pollWatch } from "../watch/poller.js";
+import { webSearch } from "./web-search.js";
+import type { WebSearchResult } from "./web-search.js";
 
 /** Cap how many page images we attach per read, and the max edge length. */
 const MAX_IMAGES_PER_READ = 6;
@@ -213,6 +215,10 @@ const GUIDELINES = [
   "`anytype_watch` 的 `prompt` 参数可让 AI 在对象每次变化时执行一条指令（例如『总结这篇文章的变化』『检查未完成待办并提醒我』）：届时 AI 会先读取该对象、再按指令处理，并把结果发到聊天。用户想要摘要/检查/动作而非原始 diff 时，就设置 `prompt`。",
 ];
 
+/** Extra guideline for the web_search tool (the rest are the shared identity ones). */
+const WEB_SEARCH_GUIDELINE =
+  "Use `web_search` for current events / facts you're unsure about; cite the returned sources.";
+
 /**
  * Build the Anytype tool set bound to one space via the shared client.
  * Results are returned as text content; failures are surfaced to the model as
@@ -231,8 +237,28 @@ export function createAnytypeTools(deps: {
   defaultWatchCron: string;
   /** Called after a watch is added/removed (e.g. to trigger an immediate poll). */
   onWatchChange?: () => void;
+  /** DeepSeek key backing the `web_search` tool (env DEEPSEEK_API_KEY). Empty disables it. */
+  searchApiKey: string;
+  /** Model id for `web_search` (env SEARCH_MODEL). Defaults to the search fn's own default. */
+  searchModel?: string;
+  /** Max number of searches `web_search` may run (default 3). */
+  searchMaxUses?: number;
+  /** Search implementation (defaults to the real DeepSeek web search; injectable for tests). */
+  searchFn?: typeof webSearch;
 }): ToolDefinition[] {
-  const { api, spaceId, workspaceDir, store, chatId, defaultWatchCron, onWatchChange } = deps;
+  const {
+    api,
+    spaceId,
+    workspaceDir,
+    store,
+    chatId,
+    defaultWatchCron,
+    onWatchChange,
+    searchApiKey,
+    searchModel,
+    searchMaxUses,
+    searchFn = webSearch,
+  } = deps;
 
   /** Message shown when a cron expression fails validation. */
   const CRON_HELP =
@@ -1136,6 +1162,42 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const webSearchTool = defineTool({
+    name: "web_search",
+    label: "Web search",
+    description:
+      "Search the web for current information (news, recent facts, anything outside the Anytype space or your knowledge). Returns a short answer plus the sources it used. Use this for current events or facts you're unsure about, and cite the returned sources.",
+    promptSnippet: "web_search — search the web for current events / facts and cite the returned sources",
+    promptGuidelines: [...GUIDELINES, WEB_SEARCH_GUIDELINE],
+    parameters: Type.Object({
+      query: Type.String({ description: "The search query or question to look up on the web." }),
+      max_uses: Type.Optional(
+        Type.Number({ description: "Maximum number of web searches to run (default 3)." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      if (searchApiKey.length === 0) {
+        return textResult("web search is not configured (set DEEPSEEK_API_KEY)");
+      }
+      try {
+        const { text, sources }: WebSearchResult = await searchFn({
+          apiKey: searchApiKey,
+          query: params.query,
+          model: searchModel,
+          maxUses: params.max_uses ?? searchMaxUses,
+        });
+        const parts: string[] = [];
+        if (text.length > 0) parts.push(text);
+        if (sources.length > 0) {
+          parts.push(`来源：\n${sources.map((s) => `- ${s.title} — ${s.url}`).join("\n")}`);
+        }
+        return textResult(parts.join("\n\n"));
+      } catch (err) {
+        return textResult(`web_search failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   return [
     listObjects,
     search,
@@ -1162,5 +1224,6 @@ export function createAnytypeTools(deps: {
     deleteMessage,
     templates,
     insertMarkdown,
+    webSearchTool,
   ] as ToolDefinition[];
 }

@@ -22,6 +22,7 @@ function posInt(env: NodeJS.ProcessEnv, key: string, dflt: number): number {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const piModel = env.PI_MODEL || "deepseek-flash";
   return {
     apiKey: required(env, "ANYTYPE_API_KEY"),
     apiBaseUrl: required(env, "ANYTYPE_API_BASE_URL"),
@@ -34,7 +35,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     agentWorkspaceRoot: env.AGENT_WORKSPACE_ROOT || "/workspace",
     piAgentDir: env.PI_AGENT_DIR || undefined,
     // DeepSeek V4.1 (`deepseek-flash`) is natively multimodal; see docker/models.json.
-    piModel: env.PI_MODEL || "deepseek-flash",
+    piModel,
+    // The `web_search` tool uses DeepSeek's hosted search (same key as the agent).
+    // Empty disables the tool with a clear message.
+    searchApiKey: env.DEEPSEEK_API_KEY ?? "",
+    searchModel: env.SEARCH_MODEL || piModel,
     maxConcurrentSessions: posInt(env, "MAX_CONCURRENT_SESSIONS", 3),
     idleReapMs: num(env, "IDLE_REAP_MS", 900000),
     replyMaxLen: posInt(env, "REPLY_MAX_LEN", 4000),
