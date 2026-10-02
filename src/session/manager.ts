@@ -180,8 +180,10 @@ export class SessionManager {
   /** Set the console lock; applies to a live client. No-op (false) for non-consoles. */
   setConsoleUnlocked(chatId: string, on: boolean): boolean {
     const e = this.entries.get(chatId);
-    if (e && e.client.setConsoleUnlocked && !e.client.setConsoleUnlocked(on)) {
-      return this.getConsoleUnlocked(chatId); // client refused (not a console)
+    if (e) {
+      // A live client: ask it. If it isn't a console it has no business here.
+      const applied = e.client.setConsoleUnlocked?.(on);
+      if (applied === undefined) return this.getConsoleUnlocked(chatId); // no such method → not a console client
     }
     this.consoleLocks.set(chatId, on);
     return on;

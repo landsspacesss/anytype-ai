@@ -279,4 +279,27 @@ describe("SessionManager", () => {
     expect(setLock).toHaveBeenLastCalledWith(true);
     expect(mgr.getConsoleUnlocked("c1")).toBe(true);
   });
+
+  it("locking a console records false and survives a rebuild", async () => {
+    const setLock = vi.fn((on: boolean) => on);           // returns the resulting state, like the real client
+    const createClient = vi.fn(async () => ({
+      get busy() { return false; }, async prompt() { return "ok"; }, async close() {}, async abort() {},
+      setConsoleUnlocked: setLock, isConsoleUnlocked: () => false,
+    }));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    await mgr.ensure("c1");
+    expect(mgr.setConsoleUnlocked("c1", true)).toBe(true);
+    expect(mgr.setConsoleUnlocked("c1", false)).toBe(false);   // previously mis-reported true
+    expect(mgr.getConsoleUnlocked("c1")).toBe(false);          // lock recorded
+    await mgr.reset("c1"); await mgr.ensure("c1");
+    expect(setLock).toHaveBeenLastCalledWith(false);           // adopted locked, not resurrected unlocked
+  });
+
+  it("refuses (does not record) a lock for a client without the method", async () => {
+    const createClient = vi.fn(async () => ({ get busy() { return false; }, async prompt() { return "ok"; }, async close() {}, async abort() {} }));
+    const mgr = new SessionManager({ createClient, maxConcurrent: 3, idleMs: 100000 });
+    await mgr.ensure("c2");
+    expect(mgr.setConsoleUnlocked("c2", true)).toBe(false);
+    expect(mgr.getConsoleUnlocked("c2")).toBe(false);
+  });
 });
