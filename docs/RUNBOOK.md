@@ -160,6 +160,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `anytype_set_property` | 给对象**设属性/打标签** |
 | `anytype_list_properties` / `anytype_create_property` | 列/建**属性**（`text/number/select/multi_select/date/checkbox/url/email/phone/files/objects`）|
 | `anytype_list_types` | 列**类型** |
+| `anytype_create_type` / `anytype_update_type` / `anytype_delete_type` | **建/改/删对象类型**（如自定义 "Project"/"Recipe"）：可设 layout（`basic/note/todo/profile/bookmark/set/collection`）、emoji 图标、字段（`properties`）|
 | `anytype_create_collection` | 建**集合**（把对象归类到一起）|
 | `anytype_collection_items` | 给集合**加/移**对象 |
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
