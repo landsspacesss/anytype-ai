@@ -1,9 +1,16 @@
-# Anytype AI Bot
+# anytype-ai
 
-An `@ai` assistant that lives inside your **self-hosted Anytype** network. Mention
-the bot (or DM it) in an Anytype chat, and it answers — with a full agent behind
-it: it can read, search, create and edit your notes, look at images, read loose
-files, search the web, and run scheduled checks.
+**Bring a Notion-like AI assistant into Anytype.**
+
+Anytype is a great, private, local-first Notion alternative — but it has no AI.
+`anytype-ai` adds one: an `@ai` assistant that lives **inside your self-hosted
+Anytype**. Mention it (or DM it) in any chat and it just answers, with a full
+agent behind it — it reads, searches, writes and edits your notes, sees images,
+reads files, searches the web, and can run scheduled checks. Think "Notion AI",
+but running on your own server, over your own encrypted sync network.
+
+> 在自建的 **Anytype** 里引入一个**类 Notion 的 AI 助手**：在聊天里 @ 它（或私聊），
+> 它就能读写你的笔记、看图、读文件、联网搜索、定时检查——像一个住在你空间里的 AI。
 
 > Built on [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi)
 > (the agent runtime) and Anytype's local HTTP API. Runs as one small container
