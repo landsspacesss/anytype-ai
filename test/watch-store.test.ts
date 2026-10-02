@@ -66,7 +66,7 @@ describe("diffSnapshots", () => {
     const diff = diffSnapshots(oldSnaps, newSnaps);
     expect(diff.added).toEqual([{ id: "d", text: "fresh" }]);
     expect(diff.removed).toEqual([{ id: "c", text: "gone" }]);
-    expect(diff.changed).toEqual([{ id: "b", text: "after" }]);
+    expect(diff.changed).toEqual([{ id: "b", text: "after", oldText: "before" }]);
   });
 
   it("reports no differences for identical snapshots", () => {

@@ -236,8 +236,10 @@ async function main(): Promise<void> {
     void pollWatches({
       store: watchStore,
       api,
-      notify: (rec, text) =>
-        api.sendMessage(rec.spaceId, rec.chatId, text, `watch-${rec.objectId}-${Date.now()}`),
+      notify: async (rec, text) => {
+        console.log(`watch change: '${rec.label}' -> notifying chat ${rec.chatId}`);
+        await api.sendMessage(rec.spaceId, rec.chatId, text, `watch-${rec.objectId}-${Date.now()}`);
+      },
     })
       .catch((err) => console.warn(`watch poll failed: ${String(err)}`))
       .finally(() => {

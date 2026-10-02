@@ -2,20 +2,30 @@ import type { AnytypeClient } from "../anytype/client.js";
 import type { BlockSnap, WatchRecord } from "./store.js";
 import { WatchStore, diffSnapshots, snapshotOf } from "./store.js";
 
-/** Collapse whitespace and truncate for a one-line preview. */
+/** Collapse whitespace and truncate for a one-line preview. "" for empty text. */
 function preview(text: string): string {
   const t = text.replace(/\s+/g, " ").trim();
-  if (t.length === 0) return "(空)";
+  if (t.length === 0) return "";
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+}
+
+/** Drop blocks with no readable text (empty paragraphs, images, etc.). */
+function withText<T extends { text: string }>(blocks: T[]): T[] {
+  return blocks.filter((b) => preview(b.text).length > 0);
 }
 
 /**
  * Build a short human-readable change summary, e.g.
- * "新增 2 处、修改 1 处、删除 1 处" plus up to 3 previews of changed/added text.
+ * "新增 2 处、修改 1 处、删除 1 处" plus up to 3 previews of the changed/added
+ * text ("修改" shows `old → new`). Blocks with no text are not previewed.
  */
 export function summarizeChange(
   label: string,
-  diff: { added: BlockSnap[]; removed: BlockSnap[]; changed: BlockSnap[] },
+  diff: {
+    added: BlockSnap[];
+    removed: BlockSnap[];
+    changed: Array<{ id: string; text: string; oldText: string }>;
+  },
 ): string {
   const counts: string[] = [];
   if (diff.added.length > 0) counts.push(`新增 ${diff.added.length} 处`);
@@ -24,8 +34,13 @@ export function summarizeChange(
   const head = `订阅的对象『${label}』内容有更新：${counts.join("、") || "内容变化"}。`;
 
   const previews: string[] = [];
-  for (const b of diff.changed.slice(0, 3)) previews.push(`- 修改：${preview(b.text)}`);
-  for (const b of diff.added.slice(0, 3 - previews.length)) previews.push(`- 新增：${preview(b.text)}`);
+  for (const b of withText(diff.changed).slice(0, 3)) {
+    const oldT = preview(b.oldText);
+    previews.push(oldT ? `- 修改：${oldT} → ${preview(b.text)}` : `- 修改：${preview(b.text)}`);
+  }
+  for (const b of withText(diff.added).slice(0, 3 - previews.length)) {
+    previews.push(`- 新增：${preview(b.text)}`);
+  }
   return previews.length > 0 ? `${head}\n${previews.join("\n")}` : head;
 }
 

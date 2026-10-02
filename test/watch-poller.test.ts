@@ -26,14 +26,24 @@ describe("summarizeChange", () => {
     const summary = summarizeChange("Note 1", {
       added: [{ id: "n1", text: "brand new" }],
       removed: [{ id: "r1", text: "old" }],
-      changed: [{ id: "c1", text: "updated text" }],
+      changed: [{ id: "c1", text: "updated text", oldText: "old text" }],
     });
     expect(summary).toContain("Note 1");
     expect(summary).toContain("新增 1 处");
     expect(summary).toContain("修改 1 处");
     expect(summary).toContain("删除 1 处");
-    expect(summary).toContain("updated text");
+    expect(summary).toContain("old text → updated text");
     expect(summary).toContain("brand new");
+  });
+
+  it("skips empty-text blocks in the previews", () => {
+    const summary = summarizeChange("Note 2", {
+      added: [{ id: "e1", text: "" }],
+      removed: [],
+      changed: [],
+    });
+    expect(summary).toContain("新增 1 处"); // still counted
+    expect(summary).not.toContain("新增：");
   });
 });
 

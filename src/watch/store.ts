@@ -46,12 +46,18 @@ export function snapshotOf(doc: unknown): BlockSnap[] {
 export function diffSnapshots(
   oldSnaps: BlockSnap[],
   newSnaps: BlockSnap[],
-): { added: BlockSnap[]; removed: BlockSnap[]; changed: BlockSnap[] } {
+): {
+  added: BlockSnap[];
+  removed: BlockSnap[];
+  changed: Array<{ id: string; text: string; oldText: string }>;
+} {
   const oldText = new Map(oldSnaps.map((s) => [s.id, s.text]));
   const newText = new Map(newSnaps.map((s) => [s.id, s.text]));
   const added = newSnaps.filter((s) => !oldText.has(s.id));
   const removed = oldSnaps.filter((s) => !newText.has(s.id));
-  const changed = newSnaps.filter((s) => oldText.has(s.id) && oldText.get(s.id) !== s.text);
+  const changed = newSnaps
+    .filter((s) => oldText.has(s.id) && oldText.get(s.id) !== s.text)
+    .map((s) => ({ id: s.id, text: s.text, oldText: oldText.get(s.id) ?? "" }));
   return { added, removed, changed };
 }
 
