@@ -143,7 +143,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 
 | 工具 | 作用 |
 |---|---|
-| `anytype_list_objects` | 列出当前空间的对象（**已过滤聊天/系统对象**） |
+| `anytype_list_objects` | 列出对象（默认：页面/笔记，已过滤聊天/系统对象）。**带 `type`**（如 `image`/`file`/`task`）可枚举**该类型的全部对象**——包括**没放进页面的散图/散文件**（默认列表看不到它们）|
 | `anytype_search` | 按文本搜空间内容 |
 | `anytype_read_object` | 读某篇：**正文按块还原成 Markdown**（标题 `#`、列表 `-`/缩进、待办 `- [x]`、代码围栏、引用 `>`、图片 `![名](id)`），并**附带页面图片**（缩放到 ≤1600px 作为图片内容发给多模态模型，所以它能"看图"） |
 | `anytype_download_images` | 把某篇的**图片下载到容器**（`/workspace/<space>/images/<id>/`），返回路径和像素尺寸 |
