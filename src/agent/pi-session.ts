@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   AuthStorage,
@@ -7,6 +6,7 @@ import {
   ModelRegistry,
   SessionManager,
   createAgentSession,
+  getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { InterruptPolicy, ManagedClient, ProgressCallback } from "../session/manager.js";
@@ -309,17 +309,25 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     });
   };
 
+  // A caller-supplied resourceLoader is used AS-IS: createAgentSession only
+  // calls `reload()` on a loader it builds itself. Without an explicit reload
+  // the extension factories never register (the approval gate would be dead)
+  // AND getSystemPrompt()/getAgentsFiles() stay empty (system prompt +
+  // AGENTS.md silently dropped). So build it, reload it, then hand it over.
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: opts.cwd,
+    agentDir: opts.agentDir ?? getAgentDir(),
+    extensionFactories: [approvalExtension],
+  });
+  await resourceLoader.reload();
+
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     agentDir: opts.agentDir,
     authStorage,
     modelRegistry,
     sessionManager,
-    resourceLoader: new DefaultResourceLoader({
-      cwd: opts.cwd,
-      agentDir: opts.agentDir ?? path.join(os.homedir(), ".pi", "agent"),
-      extensionFactories: [approvalExtension],
-    }),
+    resourceLoader,
     customTools: createAnytypeTools({
       api: opts.api,
       spaceId: opts.spaceId,

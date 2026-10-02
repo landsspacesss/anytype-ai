@@ -11,6 +11,7 @@ import {
 } from "../src/agent/pi-session.js";
 import { CONSOLE_TOOLS, effectiveToolNames } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
+import { DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
 // checked by tsc; it runs for free at test time because the module is imported.
@@ -123,5 +124,29 @@ describe("effectiveToolNames (3 modes)", () => {
   });
   it("console stays read-only regardless of mode", () => {
     expect(effectiveToolNames({ isConsole: true, mode: "auto", allToolNames: all })).toEqual([...CONSOLE_TOOLS]);
+  });
+});
+
+describe("resourceLoader reload (approval gate wiring)", () => {
+  // Regression guard: createAgentSession only calls reload() on a loader it
+  // builds itself. pi-session builds its own loader to attach the tool_call
+  // gate, so it MUST reload() before handing it over — a never-reloaded loader
+  // reports zero extensions and registers no hook, silently killing the whole
+  // ask-mode gate (and dropping the system prompt / AGENTS.md context).
+  // `noExtensions: true` isolates the inline factory from on-disk extensions,
+  // so the count is deterministic regardless of the host machine.
+  it("registers an inline extension factory only after reload()", async () => {
+    const loader = new DefaultResourceLoader({
+      cwd: process.cwd(),
+      agentDir: getAgentDir(),
+      noExtensions: true,
+      extensionFactories: [(pi) => { pi.on("tool_call", () => undefined); }],
+    });
+    expect(loader.getExtensions().extensions.length).toBe(0);
+    await loader.reload();
+    const exts = loader.getExtensions().extensions;
+    expect(exts.length).toBeGreaterThanOrEqual(1);
+    // The tool_call hook IS the gate — assert it actually registered.
+    expect(exts[0]?.handlers.get("tool_call")?.length ?? 0).toBeGreaterThanOrEqual(1);
   });
 });
