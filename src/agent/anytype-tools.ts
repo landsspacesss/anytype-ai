@@ -184,6 +184,31 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Read every workspace's MEMORY.md under `root`: the global one (`_global/`)
+ * plus each space dir. Returns [{spaceId, text}], skipping dirs without a
+ * MEMORY.md and non-directory entries. Never throws.
+ */
+export function collectMemories(root: string): Array<{ spaceId: string; text: string }> {
+  const out: Array<{ spaceId: string; text: string }> = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const file = path.join(root, e.name, "MEMORY.md");
+    try {
+      out.push({ spaceId: e.name, text: fs.readFileSync(file, "utf-8") });
+    } catch {
+      // no MEMORY.md here — skip
+    }
+  }
+  return out;
+}
+
 /** An object's display name, tolerating the post-patch 1-element array shape. */
 function objectName(doc: unknown): string {
   if (doc === null || typeof doc !== "object") return "";
@@ -1584,6 +1609,31 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const memories = defineTool({
+    name: "anytype_memories",
+    label: "Read memories",
+    description:
+      "Read the assistant's durable memories: the global MEMORY.md plus every per-space MEMORY.md, each labelled with its space name. Use this to recall what has been recorded anywhere.",
+    promptSnippet: "anytype_memories — read global + per-space memories",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const root = consoleDep!.workspaceRoot;
+        const items = collectMemories(root);
+        if (items.length === 0) return textResult("(no memories recorded yet)");
+        const names = new Map((await api.listSpaces()).map((s) => [s.id, s.name]));
+        const blocks = items.map((m) => {
+          const label = m.spaceId === "_global" ? "全局 (global)" : `${names.get(m.spaceId) || m.spaceId}`;
+          return `## ${label} [${m.spaceId}]\n${m.text.trim()}`;
+        });
+        return textResult(blocks.join("\n\n"));
+      } catch (err) {
+        return textResult(`anytype_memories failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1618,8 +1668,9 @@ export function createAnytypeTools(deps: {
     webFetchTool,
   ] as ToolDefinition[];
 
-  // Cross-space read tools are only for the global console session.
-  if (consoleDep) tools.push(listSpaces);
+  // Cross-space read tools and the memory aggregate are only for the global
+  // console session.
+  if (consoleDep) tools.push(listSpaces, memories);
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so
   // they cannot spawn further sub-agents (no recursion).

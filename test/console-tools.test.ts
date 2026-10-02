@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { createAnytypeTools, resolveSpaceId } from "../src/agent/anytype-tools.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createAnytypeTools, resolveSpaceId, collectMemories } from "../src/agent/anytype-tools.js";
 import type { AnytypeClient } from "../src/anytype/client.js";
 import type { WatchStore } from "../src/watch/store.js";
 
@@ -70,6 +73,38 @@ describe("console tool gating", () => {
     expect(text).toContain("考试");
     expect(text).toContain("spA");
     expect(text).toContain("spB");
+  });
+
+  it("anytype_memories is only in console sessions and labels each block", async () => {
+    expect(toolNames(createAnytypeTools(baseDeps(fakeApi())))).not.toContain("anytype_memories");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wsroot2-"));
+    fs.mkdirSync(path.join(root, "_global"), { recursive: true });
+    fs.writeFileSync(path.join(root, "_global", "MEMORY.md"), "hello-global");
+    const deps = { ...baseDeps(fakeApi(), false), console: { workspaceRoot: root } };
+    const tools = createAnytypeTools(deps);
+    const t = tools.find((x) => x.name === "anytype_memories")!;
+    const text = ((await t.execute("id", {})).content[0] as { text: string }).text;
+    expect(text).toContain("hello-global");
+    expect(text).toContain("_global");
+  });
+});
+
+describe("collectMemories", () => {
+  it("reads _global plus each space dir, skipping dirs without MEMORY.md", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "wsroot-"));
+    fs.mkdirSync(path.join(root, "_global"), { recursive: true });
+    fs.writeFileSync(path.join(root, "_global", "MEMORY.md"), "global note");
+    fs.mkdirSync(path.join(root, "spA"), { recursive: true });
+    fs.writeFileSync(path.join(root, "spA", "MEMORY.md"), "space A note");
+    fs.mkdirSync(path.join(root, "empty"), { recursive: true }); // no MEMORY.md
+    const got = collectMemories(root).map((m) => m.spaceId).sort();
+    expect(got).toEqual(["_global", "spA"]);
+    const g = collectMemories(root).find((m) => m.spaceId === "_global")!;
+    expect(g.text).toContain("global note");
+  });
+
+  it("returns [] for a missing root", () => {
+    expect(collectMemories(path.join(os.tmpdir(), "no-such-root-xyz"))).toEqual([]);
   });
 });
 
