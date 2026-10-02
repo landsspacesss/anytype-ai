@@ -33,6 +33,14 @@ describe("WorkflowRunStore", () => {
     const p = store.writeStepOutput("r2", "a", "big output");
     expect(fs.readFileSync(p, "utf-8")).toBe("big output");
   });
+  it("splits embedded newlines so each log record stays one line", () => {
+    const root = tmpRoot();
+    const store = new WorkflowRunStore(root);
+    store.create(mkState("r3"));
+    store.log("r3", "line1\nline2");
+    const log = fs.readFileSync(path.join(store.dir("r3"), "log.ndjson"), "utf-8").trim().split("\n");
+    expect(log).toEqual(["line1", "line2"]);
+  });
   it("load returns null for a missing run", () => {
     expect(new WorkflowRunStore(tmpRoot()).load("nope")).toBeNull();
   });

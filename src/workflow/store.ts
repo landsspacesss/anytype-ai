@@ -65,7 +65,9 @@ export class WorkflowRunStore {
   log(id: string, line: string): void {
     const d = this.dir(id);
     fs.mkdirSync(d, { recursive: true });
-    fs.appendFileSync(path.join(d, "log.ndjson"), line + "\n", "utf-8");
+    for (const part of String(line).split(/\r?\n/)) {
+      fs.appendFileSync(path.join(d, "log.ndjson"), part + "\n", "utf-8");
+    }
   }
 
   writeStepOutput(id: string, stepId: string, text: string): string {
