@@ -26,6 +26,8 @@ export interface CommandContext {
    * human-readable result message.
    */
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
+  /** True when this chat is the global console space (always read-only). */
+  isConsole: boolean;
   /** Current approval mode for this chat. */
   getApprovalMode(): ApprovalMode;
   /** Set the approval mode; returns the applied mode. */
@@ -127,6 +129,7 @@ export async function handleCommand(
     }
 
     case "yolo": {
+      if (ctx.isConsole) return "控制台始终只读（/yolo 在此无效）";
       if (!args) {
         return `审批模式：${approvalLabel(ctx.getApprovalMode())}`;
       }

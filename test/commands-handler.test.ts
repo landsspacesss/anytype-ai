@@ -50,6 +50,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     getApprovalMode,
     setApprovalMode,
     approvePending,
+    isConsole: false,
   };
   return {
     context,
@@ -180,6 +181,14 @@ describe("handleCommand", () => {
     const { context, setApprovalMode } = ctx(fakeClient());
     await handleCommand("yolo", "readonly", context);
     expect(setApprovalMode).toHaveBeenLastCalledWith("readonly");
+  });
+
+  it("/yolo is inert in the console", async () => {
+    const c = fakeClient();
+    const { context, setApprovalMode } = ctx(c);
+    const reply = await handleCommand("yolo", "ask", { ...context, isConsole: true });
+    expect(setApprovalMode).not.toHaveBeenCalled();
+    expect(reply).toMatch(/控制台/);
   });
 
   it("/approve delegates to approvePending('approve')", async () => {
