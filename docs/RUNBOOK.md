@@ -149,14 +149,23 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 | `anytype_download_images` | 把某篇的**图片下载到容器**（`/workspace/<space>/images/<id>/`），返回路径和像素尺寸 |
 | `crop_image` | **查看/裁剪**一张本地图片：给区域比例（x,y,width,height 取 0~1 的小数）就裁剪放大——看小字/手写最有效；不给则看整图 |
 | `anytype_create_note` | 新建页面 |
-| `anytype_update_object` | **改**标题 / 追加正文 |
+| `anytype_update_object` | 改标题 / 追加正文 |
+| `anytype_edit_object` | **改正文里某段文字**（pi-edit 风格：给 `find` 原文→`replace` 新文，可 `replace_all`）|
+| `anytype_update_block` | 改某个块的字段（如 `set:{checked:true}` 勾选待办），按块 id 或文本定位 |
+| `anytype_delete_block` | 删某个块（可 `recursive` 连子树），按块 id 或文本定位 |
 | `anytype_delete_object` | **删**对象 |
 | `anytype_set_property` | 给对象**设属性/打标签** |
 | `anytype_list_properties` / `anytype_create_property` | 列/建**属性**（`text/number/select/multi_select/date/checkbox/url/email/phone/files/objects`）|
 | `anytype_list_types` | 列**类型** |
 | `anytype_create_collection` | 建**集合**（把对象归类到一起）|
+| `anytype_collection_items` | 给集合**加/移**对象 |
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
+| `anytype_watch` | **订阅**某篇笔记，内容一变就在这里**通知**（`action: add/remove/list`）|
 | pi 内置 | 读写文件（含图片）、跑命令、搜索等（完整 agent） |
+
+> **筛选搜索**：`anytype_search` 支持 `filters`（按属性/标签条件筛，如"带某标签的页"）。
+>
+> **订阅是轮询式的**（间隔 `WATCH_POLL_MS`，默认 120 秒）——因为 Anytype **没有对象变更事件流**。订阅记录存在 `/workspace/watches.json`，重启不丢。
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
 
