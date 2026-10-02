@@ -1,10 +1,24 @@
 import type { ChatTarget, NormalizedEvent } from "../types.js";
+import type { ToolProgress } from "../session/manager.js";
 import { shouldTrigger, stripBotMention } from "./rules.js";
+import { StatusReporter, type StatusTransport } from "../reply/status.js";
 
 export interface RouterDeps {
   botName: string;
-  run: (spaceId: string, chatId: string, prompt: string) => Promise<string>;
+  run: (
+    spaceId: string,
+    chatId: string,
+    prompt: string,
+    onProgress?: (p: ToolProgress) => void,
+  ) => Promise<string>;
   send: (target: ChatTarget, text: string) => Promise<void>;
+  /**
+   * Optional live tool-call status transport. When absent (tests, command
+   * paths) no status message is posted.
+   */
+  status?: StatusTransport;
+  /** Delay (ms) before the status placeholder is posted. Default 1500. */
+  statusDelayMs?: number;
 }
 
 export class Router {
@@ -27,12 +41,33 @@ export class Router {
     if (event.contextNote) parts.push(event.contextNote);
     parts.push(stripped);
     const prompt = parts.join("\n\n");
+
+    // Live status: a self-updating placeholder that shows the current tool call
+    // and is retracted when the turn ends (before the real reply is sent).
+    const reporter = this.deps.status
+      ? new StatusReporter({ status: this.deps.status, delayMs: this.deps.statusDelayMs })
+      : undefined;
+
+    let reply: string | undefined;
+    let errorMsg: string | undefined;
+    reporter?.start(target);
     try {
-      const reply = await this.deps.run(event.spaceId, event.chatId, prompt);
-      if (reply.trim().length > 0) await this.deps.send(target, reply);
+      const args: Parameters<RouterDeps["run"]> = [event.spaceId, event.chatId, prompt];
+      // Only pass the 4th (progress) arg when a status reporter is active, so
+      // callers without status see the original 3-arg call.
+      if (reporter) args.push((p) => reporter.onProgress(p));
+      reply = await this.deps.run(...args);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.deps.send(target, `⚠️ agent error: ${msg}`);
+      errorMsg = err instanceof Error ? err.message : String(err);
+    } finally {
+      // Retract the placeholder before sending anything else.
+      await reporter?.stop();
+    }
+
+    if (errorMsg !== undefined) {
+      await this.deps.send(target, `⚠️ agent error: ${errorMsg}`);
+    } else if (reply !== undefined && reply.trim().length > 0) {
+      await this.deps.send(target, reply);
     }
   }
 }

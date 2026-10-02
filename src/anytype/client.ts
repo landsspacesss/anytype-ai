@@ -44,6 +44,27 @@ export class AnytypeClient {
   }
 
   /**
+   * Like `sendMessage`, but returns the created message's id so the caller can
+   * later edit/delete it (used for the live tool-call status placeholder).
+   */
+  async sendMessageReturningId(
+    spaceId: string,
+    chatId: string,
+    text: string,
+    idempotencyKey: string,
+  ): Promise<string> {
+    const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats/${chatId}/messages`;
+    const res = await this.fetchFn(url, {
+      method: "POST",
+      headers: this.headers({ "Idempotency-Key": idempotencyKey }),
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new AnytypeApiError(res.status, "sendMessageReturningId");
+    const body = (await res.json()) as { id?: string };
+    return body.id ?? "";
+  }
+
+  /**
    * Create a chat in the space. Returns its id. (Anytype exposes no chat delete
    * endpoint: a chat created here can only be archived in the app.)
    */

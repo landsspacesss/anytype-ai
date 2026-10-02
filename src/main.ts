@@ -16,7 +16,7 @@ import { handleCommand } from "./commands/handler.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
 import { pollDueWatches } from "./watch/scheduler.js";
-import type { NormalizedEvent } from "./types.js";
+import type { ChatTarget, NormalizedEvent } from "./types.js";
 
 /** Agent memory scope is per-SPACE: one workspace directory per space id. */
 function workspaceFor(root: string, spaceId: string): string {
@@ -101,10 +101,24 @@ async function main(): Promise<void> {
     keyFor: (target) => `${target.chatId}-${Date.now()}`,
   });
 
+  // Live tool-call status transport: post a placeholder that returns its id so
+  // the Router can edit it as tools run and delete it when the turn ends. Only
+  // wired when TOOL_STATUS is on.
+  const status = cfg.toolStatus
+    ? {
+        post: (t: ChatTarget, text: string) =>
+          api.sendMessageReturningId(t.spaceId, t.chatId, text, `status-${t.chatId}-${Date.now()}`),
+        edit: (t: ChatTarget, id: string, text: string) =>
+          api.editMessage(t.spaceId, t.chatId, id, text),
+        remove: (t: ChatTarget, id: string) => api.deleteMessage(t.spaceId, t.chatId, id),
+      }
+    : undefined;
+
   const router = new Router({
     botName: cfg.botDisplayName,
-    run: (_spaceId, chatId, prompt) => sessions.run(chatId, prompt),
+    run: (_spaceId, chatId, prompt, onProgress) => sessions.run(chatId, prompt, onProgress),
     send: (target, text) => sink.send(target, text),
+    ...(status ? { status, statusDelayMs: cfg.toolStatusDelayMs } : {}),
   });
 
   // Cache of object id -> display name, used to tell the agent which page a

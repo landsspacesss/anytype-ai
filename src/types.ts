@@ -68,4 +68,8 @@ export interface Config {
   watchDefaultCron: string;
   /** Consecutive 404s before a watch is dropped as deleted (env WATCH_MAX_MISSES). */
   watchMaxMisses: number;
+  /** Post a self-updating tool-call status message during a turn (env TOOL_STATUS). Default true. */
+  toolStatus: boolean;
+  /** Delay (ms) before the status placeholder is posted (env TOOL_STATUS_DELAY_MS). Default 1500. */
+  toolStatusDelayMs: number;
 }

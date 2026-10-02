@@ -6,7 +6,7 @@ import {
   SessionManager,
   createAgentSession,
 } from "@earendil-works/pi-coding-agent";
-import type { ManagedClient } from "../session/manager.js";
+import type { ManagedClient, ProgressCallback } from "../session/manager.js";
 import type { AnytypeClient } from "../anytype/client.js";
 import type { WatchStore } from "../watch/store.js";
 import { DEFAULT_WATCH_CRON } from "../watch/store.js";
@@ -222,9 +222,19 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   });
 
   let collected = "";
+  // Set for the duration of the current top-level prompt(); lets the session
+  // event handler forward tool-call starts to the caller's progress callback.
+  // Sub-agents/child sessions never set this, so they are unaffected.
+  let currentProgress: ProgressCallback | undefined;
   const unsubscribe = session.subscribe((e) => {
     if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta") {
       collected += e.assistantMessageEvent.delta;
+    } else if (e.type === "tool_execution_start") {
+      // Guard the shape: only forward a well-formed event, and only when a
+      // caller is listening.
+      if (currentProgress && typeof e.toolName === "string") {
+        currentProgress({ tool: e.toolName, args: e.args });
+      }
     }
   });
 
@@ -244,10 +254,15 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     get busy(): boolean {
       return session.isStreaming;
     },
-    async prompt(m: string): Promise<string> {
+    async prompt(m: string, onProgress?: ProgressCallback): Promise<string> {
       collected = "";
-      await session.prompt(m);
-      return collected;
+      currentProgress = onProgress;
+      try {
+        await session.prompt(m);
+        return collected;
+      } finally {
+        currentProgress = undefined;
+      }
     },
     async close(): Promise<void> {
       agentRegistry.killAll();

@@ -24,6 +24,32 @@ describe("AnytypeClient.sendMessage", () => {
   });
 });
 
+describe("AnytypeClient.sendMessageReturningId", () => {
+  it("POSTs the message and returns body.id", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: "msg-42" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    const id = await c.sendMessageReturningId("s1", "c1", "hello", "key-1");
+    expect(id).toBe("msg-42");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://x/v2/spaces/s1/chats/c1/messages");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("key-1");
+    expect(JSON.parse(init.body as string)).toEqual({ text: "hello" });
+  });
+
+  it("throws on non-2xx", async () => {
+    const fetchMock = vi.fn(async () => new Response("nope", { status: 403 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await expect(c.sendMessageReturningId("s1", "c1", "hi", "k")).rejects.toThrow(/403/);
+  });
+});
+
 describe("AnytypeClient.listSpaces", () => {
   it("GETs /v2/spaces and parses body.data", async () => {
     const fetchMock = vi.fn(

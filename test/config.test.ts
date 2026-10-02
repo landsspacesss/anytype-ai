@@ -236,4 +236,50 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
     expect(dflt.botDisplayName).toBe("anytype-bot");
   });
+
+  it("defaults toolStatus to true and honors TOOL_STATUS=false", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.toolStatus).toBe(true);
+
+    const off = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      TOOL_STATUS: "false",
+    } as NodeJS.ProcessEnv);
+    expect(off.toolStatus).toBe(false);
+
+    // Any value other than the literal "false" keeps it on.
+    const on = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      TOOL_STATUS: "true",
+    } as NodeJS.ProcessEnv);
+    expect(on.toolStatus).toBe(true);
+  });
+
+  it("defaults toolStatusDelayMs to 1500 and honors an override", () => {
+    const dflt = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+    } as NodeJS.ProcessEnv);
+    expect(dflt.toolStatusDelayMs).toBe(1500);
+
+    const custom = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      TOOL_STATUS_DELAY_MS: "500",
+    } as NodeJS.ProcessEnv);
+    expect(custom.toolStatusDelayMs).toBe(500);
+
+    // Non-positive falls back to the default.
+    const bad = loadConfig({
+      ANYTYPE_API_BASE_URL: "http://anytype-cli:31012",
+      ANYTYPE_API_KEY: "k",
+      TOOL_STATUS_DELAY_MS: "0",
+    } as NodeJS.ProcessEnv);
+    expect(bad.toolStatusDelayMs).toBe(1500);
+  });
 });

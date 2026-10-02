@@ -1,6 +1,18 @@
+/**
+ * One tool-call progress notification during an agent turn. `args` is the raw
+ * tool-call arguments as delivered by pi (shape varies per tool).
+ */
+export interface ToolProgress {
+  tool: string;
+  args?: unknown;
+}
+
+/** Callback invoked as each tool call starts during a turn. */
+export type ProgressCallback = (p: ToolProgress) => void;
+
 export interface ManagedClient {
   readonly busy: boolean;
-  prompt(message: string): Promise<string>;
+  prompt(message: string, onProgress?: ProgressCallback): Promise<string>;
   close(): Promise<void>;
   abort(): Promise<void>;
   /** Start a fresh conversation for this chat (next client will not resume old history). */
@@ -145,12 +157,12 @@ export class SessionManager {
     await this.opts.clearHistory?.(chatId);
   }
 
-  async run(chatId: string, prompt: string): Promise<string> {
+  async run(chatId: string, prompt: string, onProgress?: ProgressCallback): Promise<string> {
     const e = await this.getOrCreate(chatId);
     e.pending++;
     const result = e.queue.then(async () => {
       e.lastUsed = this.now();
-      return e.client.prompt(prompt);
+      return e.client.prompt(prompt, onProgress);
     });
     e.queue = result.catch(() => undefined);
     const done = (): void => { e.pending--; this.evictIfContended(chatId, e); };

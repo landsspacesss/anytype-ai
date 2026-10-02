@@ -60,5 +60,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Consecutive 404s before a watched object is treated as deleted (guards
     // against dropping a watch on a transient read failure).
     watchMaxMisses: posInt(env, "WATCH_MAX_MISSES", 3),
+    // Live tool-call status: a self-updating placeholder posted into the chat
+    // during a turn and retracted at the end. TOOL_STATUS=false turns it off.
+    // The delay avoids flashing a placeholder for fast replies.
+    toolStatus: env.TOOL_STATUS !== "false",
+    toolStatusDelayMs: posInt(env, "TOOL_STATUS_DELAY_MS", 1500),
   };
 }
