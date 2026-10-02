@@ -183,6 +183,20 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/pqdthe/AGENTS.md' < 新模�
 
 **触发规则**：被 `@anytype-bot` 时回复；**私聊**（成员 ≤2 的聊天）里每条都回；bot 自己的消息永不触发。
 
+### 聊天指令（消息以 `/` 开头）
+
+| 指令 | 作用 |
+|---|---|
+| `/new`（或 `/clear`） | **清空当前聊天的对话**，开新的（不记得之前） |
+| `/compact` | 压缩当前对话（省上下文） |
+| `/model [名]` | 查看 / 切换本聊天的模型（如 `deepseek-v4-pro`） |
+| `/effort [low\|medium\|high\|max]` | 查看 / 设置思考等级 |
+| `/yolo [on\|off]` | **自动模式**（默认开）：开=全部工具；关=**只读**（禁增删改） |
+| `/help` | 列出指令 |
+
+> 指令只在**会触发**的消息里生效（即私聊，或被 @ 的群聊消息）。执行指令**不经过** agent，直接回结果。
+> **对话历史已持久化**（`/workspace/sessions/<chat>/…jsonl`），重启不丢；`/new` 才清空。可用 `SESSION_PERSIST=false` 关掉持久化。
+
 ---
 
 ## 7. 排障
