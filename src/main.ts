@@ -52,19 +52,21 @@ async function main(): Promise<void> {
   // `anytype_join_space` tool. The client is lazy (connects on first call).
   const grpcClient = new HeartGrpc({});
   const joinSpace = async (link: string): Promise<{ ok: boolean; message: string }> => {
-    if (!cfg.consoleSpaceId) {
-      const r = await bootstrapFromLink(grpcClient, link, consoleFile);
-      if (!r.ok) return { ok: false, message: `接入失败：${r.error}` };
-      if (r.kind === "onetoone") {
-        return {
-          ok: true,
-          message: `已接入控制台（空间 ${r.spaceId}）。重启后生效：docker compose ... up -d --force-recreate --no-deps ai-bot`,
-        };
-      }
-      return { ok: true, message: `已加入空间（邀请链接）` };
-    }
+    // Whether a console was already configured BEFORE this call (env or console.json).
+    const hadConsole = !!consoleSpaceId;
     const r = await bootstrapFromLink(grpcClient, link, consoleFile);
-    return { ok: r.ok, message: r.ok ? "已完成" : `失败：${r.error}` };
+    if (!r.ok) return { ok: false, message: `失败：${r.error}` };
+    if (r.kind === "onetoone") {
+      return hadConsole
+        ? { ok: true, message: `控制台已接入（空间 ${r.spaceId}）` }
+        : {
+            ok: true,
+            message:
+              `已接入控制台（空间 ${r.spaceId}）。` +
+              `重启后生效：docker compose -f docker-compose.yml -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml up -d --force-recreate --no-deps ai-bot`,
+          };
+    }
+    return { ok: true, message: "已加入空间（邀请链接）。bot 会自动发现并订阅它。" };
   };
 
   const api = new AnytypeClient({ baseUrl: cfg.apiBaseUrl, apiKey: cfg.apiKey });
