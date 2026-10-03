@@ -17,6 +17,22 @@ describe("AnytypeClient.sendMessage", () => {
     expect(JSON.parse(init.body as string)).toEqual({ text: "hello" });
   });
 
+  it("includes attachments in the body when given", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.sendMessage("s1", "c1", "see image", "k2", ["file-1", "file-2"]);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ text: "see image", attachments: ["file-1", "file-2"] });
+  });
+
+  it("omits attachments when none are given", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });
+    await c.sendMessage("s1", "c1", "plain", "k3", []);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ text: "plain" });
+  });
+
   it("throws on non-2xx", async () => {
     const fetchMock = vi.fn(async () => new Response("nope", { status: 403 }));
     const c = new AnytypeClient({ baseUrl: "http://x", apiKey: "k", fetch: fetchMock as unknown as typeof fetch });

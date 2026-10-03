@@ -79,7 +79,10 @@ export async function runStep(step: Step, args: Record<string, unknown>, ctx: St
           const chat = str(args.chat);
           if (!chat) throw new Error(`step ${step.id}: send_message needs \`chat\``);
           await requireApproval(ctx, step, "anytype_send_message", `${str(args.chat)}: ${str(args.text)}`);
-          await ctx.api.sendMessage(space, chat, str(args.text), `wf-${step.id}-${Date.now()}`);
+          const attaches = Array.isArray(args.attachments)
+            ? (args.attachments as unknown[]).filter((x): x is string => typeof x === "string" && x.length > 0)
+            : undefined;
+          await ctx.api.sendMessage(space, chat, str(args.text), `wf-${step.id}-${Date.now()}`, attaches);
           return "sent";
         }
         default:

@@ -33,12 +33,20 @@ export class AnytypeClient {
     return { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json", ...extra };
   }
 
-  async sendMessage(spaceId: string, chatId: string, text: string, idempotencyKey: string): Promise<void> {
+  async sendMessage(
+    spaceId: string,
+    chatId: string,
+    text: string,
+    idempotencyKey: string,
+    attachments?: string[],
+  ): Promise<void> {
     const url = `${this.baseUrl}/v2/spaces/${spaceId}/chats/${chatId}/messages`;
+    const body: Record<string, unknown> = { text };
+    if (attachments && attachments.length > 0) body.attachments = attachments;
     const res = await this.fetchFn(url, {
       method: "POST",
       headers: this.headers({ "Idempotency-Key": idempotencyKey }),
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new AnytypeApiError(res.status, "sendMessage");
   }

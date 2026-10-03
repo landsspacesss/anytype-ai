@@ -38,6 +38,13 @@ describe("runStep", () => {
     await runStep(step("anytype", { op: "send_message", chat: "c", text: "hi" }), { op: "send_message", chat: "c", text: "hi" }, c);
     expect(c.api.sendMessage).toHaveBeenCalled();
   });
+  it("anytype send_message: passes attachments through", async () => {
+    const c = ctx();
+    const args = { op: "send_message", chat: "c", text: "hi", attachments: ["f1", "f2"] };
+    await runStep(step("anytype", args), args, c);
+    const call = (c.api.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[4]).toEqual(["f1", "f2"]);
+  });
   it("agent: delegates to runAgent(space, prompt)", async () => {
     const c = ctx();
     const out = await runStep(step("agent", { space: "sp", prompt: "yes?" }), { space: "sp", prompt: "yes?" }, c);

@@ -1435,6 +1435,17 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("Sent");
   });
 
+  it("anytype_send_message passes attachments through (image/file ids)", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_send_message"), {
+      text: "看这张图",
+      attachments: ["file-1", "file-2"],
+    });
+    const call = (api.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[4]).toEqual(["file-1", "file-2"]);
+    expect(res.content[0].text).toContain("2 attachment");
+  });
+
   it("anytype_react calls reactToMessage on the current chat", async () => {
     const api = fakeApi();
     const res = await run(toolByName(mkTools(api), "anytype_react"), { message_id: "m1", emoji: "👍" });

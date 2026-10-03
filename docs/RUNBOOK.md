@@ -166,7 +166,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
 | `anytype_insert_markdown` | **精确插入** Markdown 到对象（`before`/`after` 指定位置或 `position` 首/尾；支持表格等）|
 | `anytype_templates` | 模板**列/建/删**（`action: list/create/delete`）；`anytype_create_note` 可带 `template_id` 套用 |
-| `anytype_send_message` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / 加 emoji 反应 / 改 / 删消息 |
+| `anytype_send_message` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / 加 emoji 反应 / 改 / 删消息。**发消息可带附件**（`attachments` = 文件对象 id 数组，先用 `anytype_upload_file` 上传拿 id）——图片/文件会显示在消息里 |
 | `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
 | `web_search` | **联网搜索**当前信息（走 DeepSeek 托管的 Anthropic `web_search`，**同一个 key**；返回答案+来源链接）|
 | `subagent` | **派子代理（一次性）**：把独立子任务交给一个全新隔离会话跑（带同样工具、**不能再派子代理**），返回结果。适合「分别总结多篇 / 批量搜读」——保持主上下文干净。每次是一次完整模型调用（费 token）|
@@ -381,7 +381,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | `uses` | `with` 键 | 输出（存 `steps.<id>.output`）|
 |---|---|---|
 | `shell` | `run`（命令串，**必填**）、可选 `cwd` | stdout（超 8000 字符截断）|
-| `anytype` | `op`（必填）+ 该 op 参数；可选 `space`（缺省=触发聊天的空间）。已实现 op：`read_object`(`id`)、`search`(`query`)、`list_objects`、`create_note`(`name`/`markdown`)、`send_message`(`chat`/`text`) | 结果文本 / JSON |
+| `anytype` | `op`（必填）+ 该 op 参数；可选 `space`（缺省=触发聊天的空间）。已实现 op：`read_object`(`id`)、`search`(`query`)、`list_objects`、`create_note`(`name`/`markdown`)、`send_message`(`chat`/`text`/可选 `attachments`=文件对象 id 数组) | 结果文本 / JSON |
 | `http` | `url`（**必填**）、可选 `method`（默认 `GET`）/ `headers` / `body` | 响应体（截断）|
 | `agent` | `prompt`（**必填**）、可选 `space` / `tools` / `model` / `fallback` | 绑目标 space 的一次性子会话返回的**文本**。`model` 覆盖该步模型（用 `/model` 列出的 id）；`fallback` 是**备用模型**（主模型报错或返回空时自动改用）；`tools` 限定该步可用工具 |
 

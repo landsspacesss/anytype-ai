@@ -1379,17 +1379,25 @@ export function createAnytypeTools(deps: {
     name: "anytype_send_message",
     label: "Send a chat message",
     description:
-      "Send a text message into the CURRENT chat (the one this conversation is happening in). Use this to post something into the chat proactively — e.g. a summary or a follow-up — rather than as a reply.",
-    promptSnippet: "anytype_send_message — post a message into the current chat",
+      "Send a message into the CURRENT chat (the one this conversation is happening in). Use this to post something into the chat proactively — e.g. a summary or a follow-up — rather than as a reply. Pass `attachments` (file object ids) to include images or files: get an id from `anytype_upload_file` (upload a local path or URL) or from an existing file/image object. Attachments show up in the message so the user can view/download them.",
+    promptSnippet: "anytype_send_message — post a message (text + optional images/files) into the current chat",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       text: Type.String({ description: "The message text to send." }),
+      attachments: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Optional file object ids to attach (images/files). Get ids from anytype_upload_file or an existing file/image object.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params) {
       try {
         const key = `chat-${chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        await api.sendMessage(spaceId, chatId, params.text, key);
-        return textResult(`Sent message to the current chat (${chatId}).`);
+        const attachments = Array.isArray(params.attachments) ? params.attachments.filter((x) => typeof x === "string" && x.length > 0) : undefined;
+        await api.sendMessage(spaceId, chatId, params.text, key, attachments);
+        const n = attachments?.length ?? 0;
+        return textResult(`Sent message${n > 0 ? ` with ${n} attachment(s)` : ""} to the current chat (${chatId}).`);
       } catch (err) {
         return textResult(`anytype_send_message failed: ${errMessage(err)}`);
       }
