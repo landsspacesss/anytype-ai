@@ -20,6 +20,27 @@
           "thinkingLevelMap": { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" }
         }
       ]
+    },
+    "nvidia": {
+      "api": "openai-completions",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apiKey": "$NVIDIA_API_KEY",
+      "models": [
+        {
+          "id": "google/diffusiongemma-26b-a4b-it",
+          "name": "DiffusionGemma 26B-A4B IT",
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 8192
+        },
+        {
+          "id": "google/gemma-4-31b-it",
+          "name": "Gemma 4 31B IT",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 8192
+        }
+      ]
     }
   }
 }
