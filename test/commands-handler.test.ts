@@ -36,6 +36,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
   });
   const joinSpace = vi.fn(async () => ({ ok: true, message: "ok" }));
   const runWorkflow = vi.fn(async () => ({ ok: true, message: "started r1" }));
+  const listWorkflows = vi.fn(() => [{ name: "demo", description: "a demo" }]);
   const listRuns = vi.fn(() => [{ id: "r1", name: "demo", status: "done", when: "t" }]);
   let mode: ApprovalMode = "auto";
   const setApprovalMode = vi.fn((m: ApprovalMode) => { mode = m; return m; });
@@ -54,6 +55,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     setInterruptPolicy,
     joinSpace,
     runWorkflow,
+    listWorkflows,
     listRuns,
     getApprovalMode,
     setApprovalMode,
@@ -69,6 +71,7 @@ function ctx(client: ManagedClient | undefined, policy: InterruptPolicy = "step"
     setInterruptPolicy,
     joinSpace,
     runWorkflow,
+    listWorkflows,
     listRuns,
     setApprovalMode,
     approvePending,
@@ -354,6 +357,18 @@ describe("handleCommand", () => {
   it("/run with no arg shows usage", async () => {
     const { context } = ctx(fakeClient());
     expect(await handleCommand("run", "", context)).toMatch(/用法/);
+  });
+  it("/run with no arg lists available workflows (+description)", async () => {
+    const { context, listWorkflows } = ctx(fakeClient());
+    const reply = await handleCommand("run", "", context);
+    expect(listWorkflows).toHaveBeenCalled();
+    expect(reply).toContain("demo");
+    expect(reply).toContain("a demo");
+  });
+  it("/run with no arg and no workflows says so", async () => {
+    const { context } = ctx(fakeClient());
+    context.listWorkflows = () => [];
+    expect(await handleCommand("run", "", context)).toContain("暂无可用工作流");
   });
   it("/runs lists recent runs", async () => {
     const { context } = ctx(fakeClient());

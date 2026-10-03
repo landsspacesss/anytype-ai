@@ -28,6 +28,8 @@ export interface CommandContext {
   joinSpace(link: string): Promise<{ ok: boolean; message: string }>;
   /** Run a workflow. `args` are `k=v` pairs; when `resumeRunId` is set, continue that run. */
   runWorkflow(name: string, args: string, resumeRunId?: string): Promise<{ ok: boolean; message: string }>;
+  /** Available workflow names (+ optional description) on disk. */
+  listWorkflows(): { name: string; description?: string }[];
   /** Recent workflow runs (newest first). */
   listRuns(): { id: string; name: string; status: string; when: string }[];
   /** True when this chat is the global console space (always read-only). */
@@ -89,7 +91,7 @@ export const HELP_TEXT = [
   "/deny — 拒绝待批准的操作",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
   "/join <链接> — 加入一个空间（邀请链接）或接入 1:1 控制台（1:1 链接）",
-  "/run <工作流> [k=v …] — 运行一个工作流（--resume <id> 从断点续跑）",
+  "/run <工作流> [k=v …] — 运行一个工作流（不带参数=列出可用工作流；--resume <id> 从断点续跑）",
   "/runs — 列出最近的工作流运行",
   "/help — 显示本帮助",
 ].join("\n");
@@ -225,7 +227,13 @@ export async function handleCommand(
     }
 
     case "run": {
-      if (!args) return "用法：/run <工作流名> [k=v …]（/run <名> --resume <runId> 续跑；/runs 看历史）";
+      const usage = "用法：/run <工作流名> [k=v …]（/run <名> --resume <runId> 续跑；/runs 看历史）";
+      if (!args) {
+        const defs = ctx.listWorkflows();
+        if (defs.length === 0) return `${usage}\n（暂无可用工作流）`;
+        const lines = defs.map((w) => `· ${w.name}${w.description ? ` — ${w.description}` : ""}`);
+        return `${usage}\n\n可用工作流：\n${lines.join("\n")}`;
+      }
       const resumeMatch = args.match(/\s--resume\s+(\S+)/);
       if (!resumeMatch && /\s--resume(\s|$)/.test(args)) {
         return "用法：/run <名> --resume <runId>（--resume 后面需要 runId）";

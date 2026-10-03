@@ -328,6 +328,11 @@ async function main(): Promise<void> {
                 .map((s) => ({ id: s.id, name: s.name, status: s.status, when: s.createdAt }));
             } catch { return []; }
           };
+          const listWorkflowDefs = (): { name: string; description?: string }[] =>
+            listWorkflows(cfg.workflowDir).map((w) => ({
+              name: w.name,
+              ...(w.description ? { description: w.description } : {}),
+            }));
           const ctx: CommandContext = {
             chatId: e.chatId,
             getClient: () => sessions.get(e.chatId),
@@ -347,6 +352,7 @@ async function main(): Promise<void> {
             setApprovalMode: (mode) => sessions.setApprovalMode(e.chatId, mode),
             approvePending: (kind) => sessions.approvePending(e.chatId, kind),
             runWorkflow: (name, args, resumeRunId) => doRun(e.chatId, name, args, resumeRunId),
+            listWorkflows: () => listWorkflowDefs(),
             listRuns: () => listRuns(),
             isConsole: isConsoleSpace(e.spaceId),
             getConsoleUnlocked: () => sessions.getConsoleUnlocked(e.chatId),
