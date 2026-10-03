@@ -223,6 +223,23 @@ function objectName(doc: unknown): string {
   return typeof s === "string" ? s : "";
 }
 
+/** A short human label for a FilterNode[] (e.g. `tag in ["试卷"]`), else JSON. */
+function describeFilters(filters: unknown): string {
+  if (!Array.isArray(filters)) return JSON.stringify(filters);
+  const parts = filters.map((n) => {
+    if (n && typeof n === "object") {
+      const o = n as Record<string, unknown>;
+      if (typeof o.property === "string") {
+        const cond = typeof o.condition === "string" ? ` ${o.condition}` : "";
+        const val = o.value === undefined ? "" : ` ${JSON.stringify(o.value)}`;
+        return `${o.property}${cond}${val}`;
+      }
+    }
+    return JSON.stringify(n);
+  });
+  return parts.join(" 且 ");
+}
+
 /** Common content types → the file extension we save a downloaded file as. */
 const MIME_EXT: Record<string, string> = {
   "image/png": "png",
@@ -1298,7 +1315,7 @@ export function createAnytypeTools(deps: {
             if (typeof params.query === "string" && params.query.length > 0) source.query = params.query;
             if (params.filters !== undefined) source.filters = params.filters;
             objectId = queryWatchId(source.query, source.filters);
-            label = params.label ?? `查询: ${source.query || JSON.stringify(source.filters)}`;
+            label = params.label ?? `查询: ${source.query || describeFilters(source.filters)}`;
             const items =
               source.filters !== undefined
                 ? await api.filteredSearch(spaceId, { query: source.query, filters: source.filters })
@@ -1332,7 +1349,7 @@ export function createAnytypeTools(deps: {
           onWatchChange?.();
           const promptNote = prompt ? `，变化时按指令处理：${prompt}` : "";
           const what =
-            source.kind === "query" ? `查询『${source.query || JSON.stringify(source.filters)}』`
+            source.kind === "query" ? `查询『${source.query || describeFilters(source.filters)}』`
             : source.kind === "blocks" ? `『${name}』的 ${source.blockIds.length} 个块`
             : `『${name}』`;
           return textResult(`已订阅${what}，将${describeCron(cron)}检查${promptNote}；订阅 id=${objectId}，可通过 schedule 修改`);
