@@ -5,6 +5,12 @@ import path from "node:path";
 export interface BlockSnap {
   id: string;
   text: string;
+  /**
+   * Content reference that changes when a non-text block's content changes —
+   * for an image block, its `object_id` (the file object). Without this an
+   * image swap is invisible: same block id, same empty text.
+   */
+  ref?: string;
 }
 
 /**
@@ -39,9 +45,11 @@ export interface WatchRecord {
 }
 
 /**
- * Extract a compact `{id, text}` snapshot from an Anytype document's `blocks`.
- * Only string ids are kept (a block without a string id can't be tracked); a
- * non-string/absent `text` becomes "". Robust to missing/malformed fields.
+ * Extract a compact `{id, text, ref?}` snapshot from an Anytype document's
+ * `blocks`. Only string ids are kept (a block without a string id can't be
+ * tracked); a non-string/absent `text` becomes "". An image block also carries
+ * its `object_id` as `ref`, so a re-uploaded image (same block, new file) is
+ * detectable. Robust to missing/malformed fields.
  */
 export function snapshotOf(doc: unknown): BlockSnap[] {
   if (doc === null || typeof doc !== "object") return [];
@@ -52,14 +60,33 @@ export function snapshotOf(doc: unknown): BlockSnap[] {
     if (b === null || typeof b !== "object") continue;
     const block = b as Record<string, unknown>;
     if (typeof block.id !== "string") continue;
-    out.push({ id: block.id, text: typeof block.text === "string" ? block.text : "" });
+    const snap: BlockSnap = {
+      id: block.id,
+      text: typeof block.text === "string" ? block.text : "",
+    };
+    if (typeof block.object_id === "string" && block.object_id.length > 0) {
+      snap.ref = block.object_id;
+    }
+    out.push(snap);
   }
   return out;
 }
 
+/** Whether a block's rendered content differs between two snapshots. */
+function blockChanged(old: BlockSnap, next: BlockSnap): boolean {
+  if (old.text !== next.text) return true;
+  // Non-text content (e.g. an image's file): a swap is a change — but ONLY once
+  // both sides recorded a ref. This makes a snapshot written before refs existed
+  // re-baseline silently on the next poll instead of reporting every image as
+  // changed (see `ref` on BlockSnap).
+  if (old.ref !== undefined && next.ref !== undefined && old.ref !== next.ref) return true;
+  return false;
+}
+
 /**
  * Diff two snapshots by block id: ids only in `newSnaps` are added, ids only in
- * `oldSnaps` are removed, and ids in both whose text changed are changed.
+ * `oldSnaps` are removed, and ids in both whose text OR content-ref changed are
+ * changed (a ref-only change is an image swap).
  */
 export function diffSnapshots(
   oldSnaps: BlockSnap[],
@@ -67,15 +94,24 @@ export function diffSnapshots(
 ): {
   added: BlockSnap[];
   removed: BlockSnap[];
-  changed: Array<{ id: string; text: string; oldText: string }>;
+  changed: Array<{ id: string; text: string; oldText: string; ref?: string; oldRef?: string }>;
 } {
-  const oldText = new Map(oldSnaps.map((s) => [s.id, s.text]));
-  const newText = new Map(newSnaps.map((s) => [s.id, s.text]));
-  const added = newSnaps.filter((s) => !oldText.has(s.id));
-  const removed = oldSnaps.filter((s) => !newText.has(s.id));
-  const changed = newSnaps
-    .filter((s) => oldText.has(s.id) && oldText.get(s.id) !== s.text)
-    .map((s) => ({ id: s.id, text: s.text, oldText: oldText.get(s.id) ?? "" }));
+  const oldById = new Map(oldSnaps.map((s) => [s.id, s]));
+  const newById = new Map(newSnaps.map((s) => [s.id, s]));
+  const added = newSnaps.filter((s) => !oldById.has(s.id));
+  const removed = oldSnaps.filter((s) => !newById.has(s.id));
+  const changed = newSnaps.flatMap((s) => {
+    const old = oldById.get(s.id);
+    if (!old || !blockChanged(old, s)) return [];
+    const entry: { id: string; text: string; oldText: string; ref?: string; oldRef?: string } = {
+      id: s.id,
+      text: s.text,
+      oldText: old.text,
+    };
+    if (s.ref !== undefined) entry.ref = s.ref;
+    if (old.ref !== undefined) entry.oldRef = old.ref;
+    return [entry];
+  });
   return { added, removed, changed };
 }
 
@@ -122,7 +158,9 @@ export class WatchStore {
               .filter((s) => s !== null && typeof s === "object" && typeof (s as BlockSnap).id === "string")
               .map((s) => {
                 const b = s as Record<string, unknown>;
-                return { id: b.id as string, text: typeof b.text === "string" ? b.text : "" };
+                const snap: BlockSnap = { id: b.id as string, text: typeof b.text === "string" ? b.text : "" };
+                if (typeof b.ref === "string" && b.ref.length > 0) snap.ref = b.ref;
+                return snap;
               })
           : [];
         const label = typeof rec.label === "string" ? rec.label : rec.objectId;

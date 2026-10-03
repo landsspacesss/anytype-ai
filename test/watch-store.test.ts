@@ -50,6 +50,14 @@ describe("snapshotOf", () => {
     expect(snapshotOf({ blocks: "nope" })).toEqual([]);
     expect(snapshotOf({ blocks: [{ id: "b1", text: 123 }] })).toEqual([{ id: "b1", text: "" }]);
   });
+
+  it("captures an image block's object_id as ref", () => {
+    const doc = { blocks: [{ id: "i1", type: "image", object_id: "fileA" }, { id: "p1", type: "paragraph", text: "x" }] };
+    expect(snapshotOf(doc)).toEqual([
+      { id: "i1", text: "", ref: "fileA" },
+      { id: "p1", text: "x" },
+    ]);
+  });
 });
 
 describe("diffSnapshots", () => {
@@ -73,6 +81,26 @@ describe("diffSnapshots", () => {
   it("reports no differences for identical snapshots", () => {
     const snaps = [{ id: "a", text: "x" }];
     expect(diffSnapshots(snaps, snaps)).toEqual({ added: [], removed: [], changed: [] });
+  });
+
+  it("treats an image swap (same block id, new object_id) as changed", () => {
+    const oldSnaps = [{ id: "i1", text: "", ref: "fileA" }];
+    const newSnaps = [{ id: "i1", text: "", ref: "fileB" }];
+    const diff = diffSnapshots(oldSnaps, newSnaps);
+    expect(diff.added).toEqual([]);
+    expect(diff.removed).toEqual([]);
+    expect(diff.changed).toEqual([{ id: "i1", text: "", oldText: "", ref: "fileB", oldRef: "fileA" }]);
+  });
+
+  it("silently re-baselines an image whose old snapshot had no ref", () => {
+    // A snapshot written before refs existed: same block, but old has no ref.
+    const diff = diffSnapshots([{ id: "i1", text: "" }], [{ id: "i1", text: "", ref: "fileA" }]);
+    expect(diff).toEqual({ added: [], removed: [], changed: [] });
+  });
+
+  it("reports an added image block (with empty text)", () => {
+    const diff = diffSnapshots([], [{ id: "i1", text: "", ref: "fileA" }]);
+    expect(diff.added).toEqual([{ id: "i1", text: "", ref: "fileA" }]);
   });
 });
 
@@ -116,6 +144,18 @@ describe("WatchStore", () => {
     const b = new WatchStore(file);
     b.load();
     expect(b.get("sp1", "obj1")?.prompt).toBe("总结这篇文章的变化");
+  });
+
+  it("round-trips an image block's ref through save/load", () => {
+    const file = tmpFile();
+    const a = new WatchStore(file);
+    a.load();
+    a.upsert(rec({ snapshot: [{ id: "i1", text: "", ref: "fileA" }] }));
+    a.save();
+
+    const b = new WatchStore(file);
+    b.load();
+    expect(b.get("sp1", "obj1")?.snapshot).toEqual([{ id: "i1", text: "", ref: "fileA" }]);
   });
 
   it("omits an absent or blank prompt when loading", () => {

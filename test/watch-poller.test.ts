@@ -45,9 +45,44 @@ describe("summarizeChange", () => {
     expect(summary).toContain("新增 1 处"); // still counted
     expect(summary).not.toContain("新增：");
   });
+
+  it("surfaces an added image by its object_id", () => {
+    const summary = summarizeChange("Note 3", {
+      added: [{ id: "i1", text: "", ref: "fileA" }],
+      removed: [],
+      changed: [],
+    });
+    expect(summary).toContain("新增 1 处");
+    expect(summary).toContain("新增图片 object_id=fileA");
+  });
+
+  it("surfaces an image swap by old → new object_id", () => {
+    const summary = summarizeChange("Note 4", {
+      added: [],
+      removed: [],
+      changed: [{ id: "i1", text: "", oldText: "", ref: "fileB", oldRef: "fileA" }],
+    });
+    expect(summary).toContain("修改 1 处");
+    expect(summary).toContain("换图：fileA → fileB");
+  });
 });
 
 describe("pollWatch", () => {
+  it("notifies on an image swap and advances the stored ref", async () => {
+    const store = seededStore([{ id: "i1", text: "", ref: "fileA" }]);
+    const rec = store.get("sp1", "obj1")!;
+    const api = {
+      getObjectRaw: vi.fn(async () => ({ blocks: [{ id: "i1", type: "image", object_id: "fileB" }] })),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(rec, { store, api, notify });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect((notify.mock.calls[0] as unknown as [WatchRecord, string])[1]).toContain("换图：fileA → fileB");
+    expect(store.get("sp1", "obj1")?.snapshot).toEqual([{ id: "i1", text: "", ref: "fileB" }]);
+  });
+
   it("notifies and advances the snapshot for a single record", async () => {
     const store = seededStore([{ id: "b1", text: "hello" }]);
     const rec = store.get("sp1", "obj1")!;

@@ -180,6 +180,9 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 
 > **订阅可带指令（重点）**：订阅时给 `prompt`（如 `总结这篇文章的变化`、`检查未完成待办并提醒我`），cron 命中且检测到变化时，AI 会**自己去读该对象、按指令处理**，把结果发回聊天——不是干巴巴地念 diff。典型用法：**`订阅"日常试卷1"，每天9点总结一下变化`**。
 
+> **图片变化也能测**：diff 不只看文字——图片块会记它的 `object_id`，所以**换图**（同一块换了张图）也会触发，摘要里给 `换图：旧id → 新id`；新增图片给 `新增图片 object_id=…`。触发语带上这些 id，AI 就能**只取变了的图**（`anytype_download_images`）再处理，而不是重读整页。局限：靠 `object_id` 变化判定；若 Anytype 原地改同一文件对象（同 id 换字节）则测不出（需下载比字节，太重，未做）。
+
+
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。
 
 **触发规则**：被 `@anytype-bot` 时回复；**私聊**（成员 ≤2 的聊天）里每条都回；bot 自己的消息永不触发。

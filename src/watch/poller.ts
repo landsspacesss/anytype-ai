@@ -12,22 +12,26 @@ function preview(text: string): string {
   return t.length > 40 ? `${t.slice(0, 40)}…` : t;
 }
 
-/** Drop blocks with no readable text (empty paragraphs, images, etc.). */
-function withText<T extends { text: string }>(blocks: T[]): T[] {
-  return blocks.filter((b) => preview(b.text).length > 0);
+/**
+ * Blocks worth previewing: those with readable text, or a non-text content ref
+ * (an image) — an image-only block has empty text but a meaningful `ref`.
+ */
+function withContent<T extends { text: string; ref?: string }>(blocks: T[]): T[] {
+  return blocks.filter((b) => preview(b.text).length > 0 || !!b.ref);
 }
 
 /**
  * Build a short human-readable change summary, e.g.
- * "新增 2 处、修改 1 处、删除 1 处" plus up to 3 previews of the changed/added
- * text ("修改" shows `old → new`). Blocks with no text are not previewed.
+ * "新增 2 处、修改 1 处、删除 1 处" plus up to 3 previews. A text block shows
+ * `old → new`; an image block shows its file `object_id` (so the agent can fetch
+ * exactly the changed image) — `换图` when the file changed, `新增图片` when new.
  */
 export function summarizeChange(
   label: string,
   diff: {
     added: BlockSnap[];
     removed: BlockSnap[];
-    changed: Array<{ id: string; text: string; oldText: string }>;
+    changed: Array<{ id: string; text: string; oldText: string; ref?: string; oldRef?: string }>;
   },
 ): string {
   const counts: string[] = [];
@@ -37,12 +41,17 @@ export function summarizeChange(
   const head = `订阅的对象『${label}』内容有更新：${counts.join("、") || "内容变化"}。`;
 
   const previews: string[] = [];
-  for (const b of withText(diff.changed).slice(0, 3)) {
-    const oldT = preview(b.oldText);
-    previews.push(oldT ? `- 修改：${oldT} → ${preview(b.text)}` : `- 修改：${preview(b.text)}`);
+  for (const b of withContent(diff.changed).slice(0, 3)) {
+    if (preview(b.text).length > 0) {
+      const oldT = preview(b.oldText);
+      previews.push(oldT ? `- 修改：${oldT} → ${preview(b.text)}` : `- 修改：${preview(b.text)}`);
+    } else if (b.ref) {
+      previews.push(b.oldRef ? `- 换图：${b.oldRef} → ${b.ref}` : `- 换图：${b.ref}`);
+    }
   }
-  for (const b of withText(diff.added).slice(0, 3 - previews.length)) {
-    previews.push(`- 新增：${preview(b.text)}`);
+  for (const b of withContent(diff.added).slice(0, 3 - previews.length)) {
+    if (preview(b.text).length > 0) previews.push(`- 新增：${preview(b.text)}`);
+    else if (b.ref) previews.push(`- 新增图片 object_id=${b.ref}`);
   }
   return previews.length > 0 ? `${head}\n${previews.join("\n")}` : head;
 }
