@@ -365,7 +365,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | `shell` | `run`（命令串，**必填**）、可选 `cwd` | stdout（超 8000 字符截断）|
 | `anytype` | `op`（必填）+ 该 op 参数；可选 `space`（缺省=触发聊天的空间）。已实现 op：`read_object`(`id`)、`search`(`query`)、`list_objects`、`create_note`(`name`/`markdown`)、`send_message`(`chat`/`text`) | 结果文本 / JSON |
 | `http` | `url`（**必填**）、可选 `method`（默认 `GET`）/ `headers` / `body` | 响应体（截断）|
-| `agent` | `prompt`（**必填**）、可选 `space` / `tools` | 绑目标 space 的一次性子会话返回的**文本** |
+| `agent` | `prompt`（**必填**）、可选 `space` / `tools` / `model` | 绑目标 space 的一次性子会话返回的**文本**。`model` 覆盖该步模型（用 `/model` 列出的 id），`tools` 限定该步可用工具 |
 
 **审批**：
 
@@ -393,7 +393,6 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 **v1 限制**：
 
 - `k=v` 参数目前被**接受但尚未注入模板**（保留给后续）。
-- `agent` 步骤的 `tools:` 过滤**暂未生效**（总是全工具）。
 - `{{ env.X }}` 目前**恒为空**（v1 不注入容器 env）。
 - `shell` / `http` 步骤**不额外加审批闸门**（与普通会话里的 bash 同等待遇）。
 - 状态对话**不会自动创建**，需显式设 `WORKFLOW_STATUS_CHAT`。

@@ -320,10 +320,18 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
   // Build a fresh, isolated child session. The child gets the same Anytype
   // tools but NO subagent/agent tool, so it cannot recurse.
   const createChildAgent = async (
-    child: { spaceId?: string; cwd?: string; readOnly?: boolean } = {},
+    child: { spaceId?: string; cwd?: string; readOnly?: boolean; modelId?: string; tools?: string[] } = {},
   ): Promise<ChildAgent> => {
     const childSpace = child.spaceId ?? opts.spaceId;
     const childCwd = child.cwd ?? opts.cwd;
+    // Per-call model override (e.g. a workflow step's `model:`): resolve within
+    // this client's registry, falling back to the client's model when unknown.
+    let childModel = model;
+    if (child.modelId) {
+      const resolved = resolveModel(modelRegistry, child.modelId);
+      if (resolved) childModel = resolved;
+      else console.warn(`child agent: unknown model "${child.modelId}"; using the client default`);
+    }
     const { session: childSession } = await createAgentSession({
       cwd: childCwd,
       agentDir: opts.agentDir,
@@ -339,11 +347,20 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
         // NOTE: no runSubagent and no agentRegistry → the child cannot spawn
         // further sub-agents (no recursion).
       }),
-      ...(model ? { model: model as never } : {}),
+      ...(childModel ? { model: childModel as never } : {}),
     });
     // Explicit readOnly wins; otherwise a child inherits the parent's read-only mode.
     const wantReadonly = child.readOnly ?? (approvalMode === "readonly");
-    if (wantReadonly) {
+    const allNames = childSession.getAllTools().map((t) => t.name);
+    if (child.tools && child.tools.length > 0) {
+      // Restrict to the requested tools, never beyond what this child may use
+      // (readonly → SAFE_TOOLS only). An all-unknown request keeps the base set
+      // so a typo can't leave the child tool-less.
+      const allowed = new Set(wantReadonly ? [...SAFE_TOOLS] : allNames);
+      const wanted = child.tools.filter((t) => allowed.has(t));
+      if (wanted.length === 0) console.warn(`child agent: none of the requested tools exist (${child.tools.join(", ")}); keeping defaults`);
+      childSession.setActiveToolsByName(wanted.length > 0 ? wanted : [...allowed]);
+    } else if (wantReadonly) {
       childSession.setActiveToolsByName([...SAFE_TOOLS]);
     }
     let collected = "";
@@ -373,9 +390,15 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
    * One-shot WORKER bound to a TARGET space: runs `task` in that space's
    * workspace (its AGENTS.md/MEMORY.md) with the full tool set (minus
    * subagent/agent, so no recursion), then disposes. `space` may be an id or
-   * a name. Only the console uses this.
+   * a name. Used by the console worker and by workflow `agent` steps.
+   * `opts.modelId` overrides the model for this call; `opts.tools` restricts
+   * its active tool set.
    */
-  const runInSpace = async (space: string, task: string): Promise<string> => {
+  const runInSpace = async (
+    space: string,
+    task: string,
+    optsIn: { modelId?: string; tools?: string[] } = {},
+  ): Promise<string> => {
     if (!opts.agentWorkspaceRoot) throw new Error("runInSpace: agentWorkspaceRoot not set");
     const target = (space ?? "").trim();
     if (target.length === 0) throw new Error("runInSpace: `space` is required");
@@ -389,7 +412,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
     if (!spaceId) throw new Error(`runInSpace: space not found: ${target}`);
     const cwd = path.join(opts.agentWorkspaceRoot, spaceId);
     ensureAgentFiles(cwd); // seed that space's AGENTS.md/MEMORY.md contract
-    const a = await createChildAgent({ spaceId, cwd, readOnly: false });
+    const a = await createChildAgent({ spaceId, cwd, readOnly: false, ...optsIn });
     try {
       return await a.prompt(task);
     } finally {

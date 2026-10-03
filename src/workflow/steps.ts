@@ -14,7 +14,7 @@ export interface StepContext {
   /** cwd for `shell`. */
   workspaceDir: string;
   /** Run a one-shot agent bound to `space` and return its text. */
-  runAgent: (space: string, prompt: string, tools?: string[]) => Promise<string>;
+  runAgent: (space: string, prompt: string, tools?: string[], model?: string) => Promise<string>;
   fetchFn?: typeof fetch;
   exec?: (cmd: string, opts: { cwd?: string; timeoutMs?: number }) => Promise<{ stdout: string; stderr: string }>;
   log?: (line: string) => void;
@@ -104,8 +104,9 @@ export async function runStep(step: Step, args: Record<string, unknown>, ctx: St
       if (!prompt) throw new Error(`step ${step.id}: agent needs \`prompt\``);
       const space = str(args.space) || ctx.spaceId;
       const tools = Array.isArray(args.tools) ? (args.tools as string[]) : undefined;
+      const model = str(args.model) || undefined;
       await requireApproval(ctx, step, "agent", prompt.slice(0, 200));
-      return clip(await ctx.runAgent(space, prompt, tools));
+      return clip(await ctx.runAgent(space, prompt, tools, model));
     }
   }
 }

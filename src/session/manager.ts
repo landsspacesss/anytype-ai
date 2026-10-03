@@ -68,8 +68,12 @@ export interface ManagedClient {
   getInterruptPolicy?(): InterruptPolicy;
   /** Apply the current policy to the running turn (no-op when idle). */
   requestInterrupt?(): Promise<void>;
-  /** Run a one-shot child agent bound to `space` (id or name); throws if unknown. Console/engine use. */
-  runInSpace?(space: string, task: string): Promise<string>;
+  /**
+   * Run a one-shot child agent bound to `space` (id or name); throws if unknown.
+   * `opts.modelId` overrides the model, `opts.tools` restricts its tool set.
+   * Used by the console worker and workflow `agent` steps.
+   */
+  runInSpace?(space: string, task: string, opts?: { modelId?: string; tools?: string[] }): Promise<string>;
 }
 
 /** One queued agent turn; `resolve` carries the reply ("" when superseded). */

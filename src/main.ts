@@ -250,10 +250,13 @@ async function main(): Promise<void> {
     api,
     spaceId: chatTargets.get(chatId)?.spaceId ?? "",
     workspaceDir: cfg.agentWorkspaceRoot,
-    runAgent: async (space, prompt) => {
+    runAgent: async (space, prompt, tools, model) => {
       const c = await sessions.ensure(chatId);
       if (!c.runInSpace) throw new Error("runInSpace unavailable on client");
-      return c.runInSpace(space, prompt);
+      const o: { modelId?: string; tools?: string[] } = {};
+      if (model) o.modelId = model;
+      if (tools && tools.length > 0) o.tools = tools;
+      return c.runInSpace(space, prompt, Object.keys(o).length > 0 ? o : undefined);
     },
     approve: async ({ tool, detail }) => {
       const spaceId = chatTargets.get(chatId)?.spaceId ?? "";

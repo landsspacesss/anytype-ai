@@ -42,7 +42,13 @@ describe("runStep", () => {
     const c = ctx();
     const out = await runStep(step("agent", { space: "sp", prompt: "yes?" }), { space: "sp", prompt: "yes?" }, c);
     expect(out).toBe("yes");
-    expect(c.runAgent).toHaveBeenCalledWith("sp", "yes?", undefined);
+    expect(c.runAgent).toHaveBeenCalledWith("sp", "yes?", undefined, undefined);
+  });
+  it("agent: passes tools and model through", async () => {
+    const c = ctx();
+    const args = { space: "sp", prompt: "hi", tools: ["web_search"], model: "deepseek/deepseek-v4-pro" };
+    await runStep(step("agent", args), args, c);
+    expect(c.runAgent).toHaveBeenCalledWith("sp", "hi", ["web_search"], "deepseek/deepseek-v4-pro");
   });
   it("http: fetches the url and returns the body", async () => {
     const out = await runStep(step("http", { url: "http://x" }), { url: "http://x" }, ctx());
