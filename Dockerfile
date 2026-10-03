@@ -11,16 +11,22 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# npm cache mount: keeps downloaded tarballs across builds so `npm ci` stays
+# fast even when its layer is invalidated (BuildKit cache, not part of the image).
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 
 # ---------------------------------------------------------------------------
 # Stage 2 — build: compile TypeScript to dist/.
 # ---------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
+# Install deps FIRST, keyed on package files only, so a src-only change reuses
+# the cached npm-ci layer (with `COPY src` before `npm ci`, every code change
+# re-downloaded all dependencies — slow on a slow network).
 COPY package.json package-lock.json tsconfig.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY src ./src
-RUN npm ci && npm run build
+RUN npm run build
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: Node 22 + the compiled bot + the pi SDK node_modules.
