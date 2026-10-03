@@ -58,16 +58,23 @@ aibot up -d ai-bot            # 起
 
 ### 改代码后重新部署
 
+一条命令：
+
 ```bash
-cd /home/landspace/anytype-ai-bot
-npm run build                 # 编译 TS → dist/
-docker build -t anytype-ai-bot:latest .
-cd /home/landspace/anytype
-docker compose -f docker-compose.yml -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml \
-  up -d --force-recreate ai-bot
+/home/landspace/anytype-ai-bot/deploy.sh
 ```
 
-> 改了 `.env` 也要 `--force-recreate` 才会生效（env 是容器启动时读的）。
+它做两件事：`docker build -t anytype-ai-bot:latest -t anytype-ai-bot:<commit>`（镜像打上 git 短 sha，便于查线上跑的是哪次提交）+ 用合并 compose `up -d --force-recreate --no-deps ai-bot`。路径不同可 `BOT_REPO=… ANYTYPE_DIR=… ./deploy.sh`。
+
+> 手动等价命令（`deploy.sh` 内容）：
+> ```bash
+> cd /home/landspace/anytype-ai-bot && docker build -t anytype-ai-bot:latest .
+> cd /home/landspace/anytype && docker compose -f docker-compose.yml -f /home/landspace/anytype-ai-bot/docker-compose.bot.yml up -d --force-recreate --no-deps ai-bot
+> ```
+> 改了 `.env` 也要 `--force-recreate` 才会生效（env 是容器启动时读的）—— `deploy.sh` 已含。
+> 构建上下文由 `.dockerignore` 收窄（排除 node_modules/.git/dist 等），所以 build 很快。
+
+> **改烘焙配置（`docker/models.json`、某个 `SKILL.md`、`docker/workflows/*`）**：rebuild 即可生效 —— 启动时 `ensure*Config` 会**把卷里的副本同步成镜像里的版本**（内容不同就覆盖）。**不再需要**手动 `docker exec rm` 卷里的旧副本。
 
 ---
 
@@ -242,7 +249,7 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 **加一个技能** = 在 `docker/skills/<名字>/SKILL.md` 写好，然后 **rebuild 镜像**。注意 `ensureSkillsConfig` **只拷 `SKILL.md`**——技能目录里的**其它文件不会进容器**，所以脚本/模板要**内联进 `SKILL.md`**（或用其它方式带进镜像）。
 
-> ⚠️ **新增**技能 rebuild 即可；**修改**一个已部署过的技能，rebuild **不会**覆盖（启动时只补缺、不覆盖），需先删掉容器卷里的旧副本：`docker exec anytype-ai-bot-1 rm -rf /root/.pi/agent/skills/<name>` 再重建。
+> **新增/修改**技能都只需 rebuild —— 启动时 `ensureSkillsConfig` 会把卷里的副本**同步成镜像里的版本**（内容不同就覆盖），不用手动删卷。技能 `description` 是触发器，改完记得 rebuild 生效。
 
 ---
 
@@ -364,7 +371,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 
 **工作流 = 引擎编排的一串有序步骤**（像 GitHub Actions），**确定性执行**；只有**必要的那一步**才调用 AI（`agent` 是四种步骤之一，不是全程 agent）。引擎负责按序跑、记录每步状态/日志、失败重试、中断后从断点续跑。它与「技能」分开存放：技能是"给 agent 的知识"，工作流是"给引擎的脚本"。
 
-**定义**：`docker/workflows/<name>/workflow.yaml`（源码内；构建镜像时 `COPY docker/workflows /app/workflows`，启动时由 `ensureWorkflowsConfig` 拷进 pi agent 目录的 `workflows/`，**只补缺不覆盖**——改已部署过的先删卷内副本再重建，同技能）。字段：
+**定义**：`docker/workflows/<name>/workflow.yaml`（源码内；构建镜像时 `COPY docker/workflows /app/workflows`，启动时由 `ensureWorkflowsConfig` 同步进 pi agent 目录的 `workflows/`——改已部署过的 rebuild 即生效，同技能）。字段：
 
 | 字段 | 说明 |
 |---|---|

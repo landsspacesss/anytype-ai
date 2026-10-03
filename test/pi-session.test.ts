@@ -6,6 +6,9 @@ import {
   createPiClient,
   decideInterrupt,
   ensureAgentFiles,
+  ensureModelsConfig,
+  ensureSkillsConfig,
+  ensureWorkflowsConfig,
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
@@ -114,6 +117,62 @@ describe("ensureAgentFiles", () => {
     ensureAgentFiles(dir);
     expect(fs.readFileSync(agentsMd, "utf-8")).toBe("custom-existing-content");
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("ensure*Config sync (image is authoritative)", () => {
+  function tmpSrc(): { srcRoot: string; agentDir: string; cleanup: () => void } {
+    const srcRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-src-"));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-dst-"));
+    return { srcRoot, agentDir, cleanup: () => { fs.rmSync(srcRoot, { recursive: true, force: true }); fs.rmSync(agentDir, { recursive: true, force: true }); } };
+  }
+
+  it("writes a missing skill then leaves it alone while unchanged", () => {
+    const { srcRoot, agentDir, cleanup } = tmpSrc();
+    fs.mkdirSync(path.join(srcRoot, "demo"));
+    fs.writeFileSync(path.join(srcRoot, "demo", "SKILL.md"), "v1", "utf-8");
+    ensureSkillsConfig(agentDir, srcRoot);
+    const dest = path.join(agentDir, "skills", "demo", "SKILL.md");
+    expect(fs.readFileSync(dest, "utf-8")).toBe("v1");
+    // unchanged source → dest untouched (mtime preserved)
+    const before = fs.statSync(dest).mtimeMs;
+    ensureSkillsConfig(agentDir, srcRoot);
+    expect(fs.statSync(dest).mtimeMs).toBe(before);
+    cleanup();
+  });
+
+  it("refreshes a skill whose SOURCE changed (rebuild takes effect, no manual rm)", () => {
+    const { srcRoot, agentDir, cleanup } = tmpSrc();
+    fs.mkdirSync(path.join(srcRoot, "demo"));
+    fs.writeFileSync(path.join(srcRoot, "demo", "SKILL.md"), "v1", "utf-8");
+    ensureSkillsConfig(agentDir, srcRoot);
+    // the image source is edited + rebuilt → new content
+    fs.writeFileSync(path.join(srcRoot, "demo", "SKILL.md"), "v2", "utf-8");
+    ensureSkillsConfig(agentDir, srcRoot);
+    expect(fs.readFileSync(path.join(agentDir, "skills", "demo", "SKILL.md"), "utf-8")).toBe("v2");
+    cleanup();
+  });
+
+  it("syncs the model registry and workflows the same way", () => {
+    const { srcRoot, agentDir, cleanup } = tmpSrc();
+    const models = path.join(srcRoot, "models.json");
+    fs.writeFileSync(models, '{"v":1}', "utf-8");
+    ensureModelsConfig(agentDir, models);
+    const destModels = path.join(agentDir, "models.json");
+    expect(fs.readFileSync(destModels, "utf-8")).toBe('{"v":1}');
+    fs.writeFileSync(models, '{"v":2}', "utf-8");
+    ensureModelsConfig(agentDir, models);
+    expect(fs.readFileSync(destModels, "utf-8")).toBe('{"v":2}');
+
+    fs.mkdirSync(path.join(srcRoot, "wf"));
+    fs.writeFileSync(path.join(srcRoot, "wf", "workflow.yaml"), "name: w1", "utf-8");
+    ensureWorkflowsConfig(agentDir, srcRoot);
+    const destWf = path.join(agentDir, "workflows", "wf", "workflow.yaml");
+    expect(fs.readFileSync(destWf, "utf-8")).toBe("name: w1");
+    fs.writeFileSync(path.join(srcRoot, "wf", "workflow.yaml"), "name: w2", "utf-8");
+    ensureWorkflowsConfig(agentDir, srcRoot);
+    expect(fs.readFileSync(destWf, "utf-8")).toBe("name: w2");
+    cleanup();
   });
 });
 

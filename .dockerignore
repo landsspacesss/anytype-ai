@@ -1,0 +1,14 @@
+# The build only needs: package.json, package-lock.json, tsconfig.json,
+# src/, proto/, docker/. Excluding the rest keeps the build context small
+# (~1MB instead of ~270MB with node_modules + .git) so every build is faster.
+node_modules
+dist
+.git
+.gitignore
+.superpowers
+docs
+test
+*.md
+.env
+.env.*
+*.log

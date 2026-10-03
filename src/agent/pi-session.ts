@@ -203,18 +203,35 @@ export class TextSegmenter {
 const MODELS_SRC = "/app/pi/models.json";
 
 /**
- * Copy the custom model registry (docker/models.json) into pi's agent dir if it
- * isn't there yet. The agent dir is a volume mount, so a baked-in file at that
- * path would be shadowed — we copy it in at startup instead.
+ * Copy `src` over `dest` when `dest` is missing OR its content differs. The
+ * image's baked-in config (models/skills/workflows) is authoritative: we
+ * reconcile the volume copy to it on every boot, so rebuilding with an edited
+ * docker/models.json or SKILL.md actually takes effect. A plain "only if
+ * missing" copy silently ignored edits (you had to rm the volume copy first).
+ * Returns true when it wrote.
+ */
+function syncFile(src: string, dest: string): boolean {
+  if (!fs.existsSync(src)) return false;
+  try {
+    if (fs.existsSync(dest) && fs.readFileSync(src).equals(fs.readFileSync(dest))) return false;
+  } catch {
+    // unreadable dest → fall through and overwrite
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  return true;
+}
+
+/**
+ * Sync the custom model registry (docker/models.json) into pi's agent dir. The
+ * agent dir is a volume mount, so a baked-in file at that path would be
+ * shadowed — we copy it in at startup (refreshing it whenever the source changed).
  */
 export function ensureModelsConfig(agentDir: string, srcPath: string = MODELS_SRC): void {
   try {
     fs.mkdirSync(agentDir, { recursive: true });
     const dest = path.join(agentDir, "models.json");
-    if (!fs.existsSync(dest) && fs.existsSync(srcPath)) {
-      fs.copyFileSync(srcPath, dest);
-      console.log(`wrote model registry: ${dest}`);
-    }
+    if (syncFile(srcPath, dest)) console.log(`wrote model registry: ${dest}`);
   } catch (err) {
     console.warn(`ensureModelsConfig failed: ${String(err)}`);
   }
@@ -224,10 +241,10 @@ export function ensureModelsConfig(agentDir: string, srcPath: string = MODELS_SR
 const SKILLS_SRC = "/app/skills";
 
 /**
- * Copy the baked-in pi skills (docker/skills/<name>/SKILL.md) into pi's agent
- * dir. Like models.json, the agent dir is a volume mount, so a baked-in dir
- * there would be shadowed — we copy it in at startup. Existing skills are left
- * alone (never clobber a user's local edits).
+ * Sync the baked-in pi skills (docker/skills/<name>/SKILL.md) into pi's agent
+ * dir. The agent dir is a volume mount, so baked-in files there are shadowed —
+ * copy them in at startup, refreshing any whose source changed (so editing a
+ * deployed skill's SKILL.md and rebuilding takes effect without manual cleanup).
  */
 export function ensureSkillsConfig(agentDir: string, srcRoot: string = SKILLS_SRC): void {
   try {
@@ -236,11 +253,7 @@ export function ensureSkillsConfig(agentDir: string, srcRoot: string = SKILLS_SR
     for (const name of fs.readdirSync(srcRoot)) {
       const src = path.join(srcRoot, name, "SKILL.md");
       const dest = path.join(destRoot, name, "SKILL.md");
-      if (fs.existsSync(src) && !fs.existsSync(dest)) {
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.copyFileSync(src, dest);
-        console.log(`wrote skill: ${dest}`);
-      }
+      if (syncFile(src, dest)) console.log(`wrote skill: ${dest}`);
     }
   } catch (err) {
     console.warn(`ensureSkillsConfig failed: ${String(err)}`);
@@ -251,9 +264,9 @@ export function ensureSkillsConfig(agentDir: string, srcRoot: string = SKILLS_SR
 const WORKFLOWS_SRC = "/app/workflows";
 
 /**
- * Copy baked-in workflows (docker/workflows/<name>/workflow.yaml [+ README.md])
- * into pi's agent dir's `workflows/`. Only fills missing files (never clobbers
- * a user's copies), same volume-mount reason as skills/models.
+ * Sync baked-in workflows (docker/workflows/<name>/workflow.yaml [+ README.md])
+ * into pi's agent dir's `workflows/`, refreshing any whose source changed. Same
+ * volume-mount reason as skills/models.
  */
 export function ensureWorkflowsConfig(agentDir: string, srcRoot: string = WORKFLOWS_SRC): void {
   try {
@@ -263,11 +276,7 @@ export function ensureWorkflowsConfig(agentDir: string, srcRoot: string = WORKFL
       for (const f of ["workflow.yaml", "README.md"]) {
         const src = path.join(srcRoot, name, f);
         const dest = path.join(destRoot, name, f);
-        if (fs.existsSync(src) && !fs.existsSync(dest)) {
-          fs.mkdirSync(path.dirname(dest), { recursive: true });
-          fs.copyFileSync(src, dest);
-          console.log(`wrote workflow: ${dest}`);
-        }
+        if (syncFile(src, dest)) console.log(`wrote workflow: ${dest}`);
       }
     }
   } catch (err) {
