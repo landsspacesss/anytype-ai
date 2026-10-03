@@ -44,6 +44,11 @@ describe("WorkflowRunStore", () => {
   it("load returns null for a missing run", () => {
     expect(new WorkflowRunStore(tmpRoot()).load("nope")).toBeNull();
   });
+  it("rejects unsafe run ids (path traversal)", () => {
+    const store = new WorkflowRunStore(tmpRoot());
+    expect(() => store.dir("../../etc")).toThrow(/unsafe/);
+    expect(() => store.dir("..")).toThrow(/unsafe/);
+  });
 });
 
 describe("newRunId", () => {

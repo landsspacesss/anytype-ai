@@ -51,4 +51,30 @@ describe("runStep", () => {
   it("anytype unknown op throws", async () => {
     await expect(runStep(step("anytype", { op: "nope" }), { op: "nope" }, ctx())).rejects.toThrow(/op/);
   });
+  it("gates a write op through approve and throws when denied", async () => {
+    const c = ctx({ approve: vi.fn(async () => false) });
+    await expect(runStep(step("anytype", { op: "create_note", name: "x" }), { op: "create_note", name: "x" }, c)).rejects.toThrow(/未批准/);
+    expect(c.api.createObject).not.toHaveBeenCalled();
+  });
+  it("runs a write op when approve allows", async () => {
+    const c = ctx({ approve: vi.fn(async () => true) });
+    const out = await runStep(step("anytype", { op: "create_note", name: "x" }), { op: "create_note", name: "x" }, c);
+    expect(out).toContain("new123");
+    expect(c.approve).toHaveBeenCalledWith(expect.objectContaining({ tool: "anytype_create_object" }));
+  });
+  it("gates the agent step (denied → runAgent not called)", async () => {
+    const c = ctx({ approve: vi.fn(async () => false) });
+    await expect(runStep(step("agent", { space: "sp", prompt: "hi" }), { space: "sp", prompt: "hi" }, c)).rejects.toThrow(/未批准/);
+    expect(c.runAgent).not.toHaveBeenCalled();
+  });
+  it("does NOT gate read ops", async () => {
+    const c = ctx({ approve: vi.fn(async () => false) });
+    await expect(runStep(step("anytype", { op: "read_object", id: "o1" }), { op: "read_object", id: "o1" }, c)).resolves.toContain("卷子");
+    expect(c.approve).not.toHaveBeenCalled();
+  });
+  it("send_message is gated", async () => {
+    const c = ctx({ approve: vi.fn(async () => false) });
+    await expect(runStep(step("anytype", { op: "send_message", chat: "c", text: "hi" }), { op: "send_message", chat: "c", text: "hi" }, c)).rejects.toThrow(/未批准/);
+    expect(c.api.sendMessage).not.toHaveBeenCalled();
+  });
 });

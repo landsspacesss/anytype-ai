@@ -39,6 +39,9 @@ export class WorkflowRunStore {
   constructor(private readonly root: string) {}
 
   dir(id: string): string {
+    if (!/^[A-Za-z0-9._-]+$/.test(id) || id === "." || id === "..") {
+      throw new Error(`workflow: unsafe run id ${JSON.stringify(id)}`);
+    }
     return path.join(this.root, id);
   }
 

@@ -18,6 +18,8 @@ export interface StepContext {
   fetchFn?: typeof fetch;
   exec?: (cmd: string, opts: { cwd?: string; timeoutMs?: number }) => Promise<{ stdout: string; stderr: string }>;
   log?: (line: string) => void;
+  /** Approval check for a write-ish action (anytype write / agent step). Absent → allowed. Return false to block. */
+  approve?: (action: { tool: string; detail: string }) => Promise<boolean>;
 }
 
 const MAX_OUT = 8000;
@@ -29,6 +31,13 @@ function clip(s: string): string {
 
 function str(v: unknown): string {
   return v === undefined || v === null ? "" : String(v);
+}
+
+/** Block a write-ish step unless the wired gate approves it (no gate → allowed). */
+async function requireApproval(ctx: StepContext, step: Step, tool: string, detail: string): Promise<void> {
+  if (!ctx.approve) return;
+  const ok = await ctx.approve({ tool, detail });
+  if (!ok) throw new Error(`step ${step.id}: 未批准 ${tool}（当前聊天模式不允许写入）`);
 }
 
 /** Run one (already-rendered) step and return its output text. */
@@ -62,12 +71,14 @@ export async function runStep(step: Step, args: Record<string, unknown>, ctx: St
           return clip(JSON.stringify(items));
         }
         case "create_note": {
+          await requireApproval(ctx, step, "anytype_create_object", str(args.name));
           const created = await ctx.api.createObject(space, { name: str(args.name), markdown: str(args.markdown) });
           return `created ${created.id}`;
         }
         case "send_message": {
           const chat = str(args.chat);
           if (!chat) throw new Error(`step ${step.id}: send_message needs \`chat\``);
+          await requireApproval(ctx, step, "anytype_send_message", `${str(args.chat)}: ${str(args.text)}`);
           await ctx.api.sendMessage(space, chat, str(args.text), `wf-${step.id}-${Date.now()}`);
           return "sent";
         }
@@ -93,6 +104,7 @@ export async function runStep(step: Step, args: Record<string, unknown>, ctx: St
       if (!prompt) throw new Error(`step ${step.id}: agent needs \`prompt\``);
       const space = str(args.space) || ctx.spaceId;
       const tools = Array.isArray(args.tools) ? (args.tools as string[]) : undefined;
+      await requireApproval(ctx, step, "agent", prompt.slice(0, 200));
       return clip(await ctx.runAgent(space, prompt, tools));
     }
   }
