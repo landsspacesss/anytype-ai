@@ -1,6 +1,6 @@
 import type { AnytypeClient } from "../anytype/client.js";
-import type { BlockSnap, WatchRecord } from "./store.js";
-import { WatchStore, diffSnapshots, snapshotOf } from "./store.js";
+import type { BlockSnap, WatchRecord, WatchSource } from "./store.js";
+import { WatchStore, diffSnapshots, snapshotOf, sourceOf } from "./store.js";
 
 /** Default consecutive-404 threshold before a watch is dropped. */
 const DEFAULT_MAX_MISSES = 3;
@@ -74,9 +74,15 @@ export interface PollDeps {
  */
 export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void> {
   try {
+    const source = sourceOf(rec);
+    if (source.kind === "query") {
+      await pollQuery(rec, source, deps);
+      return;
+    }
+
     let doc: unknown;
     try {
-      doc = await deps.api.getObjectRaw(rec.spaceId, rec.objectId);
+      doc = await deps.api.getObjectRaw(rec.spaceId, source.id);
     } catch (err) {
       // The read failed. Don't assume it's deleted — confirm via the object
       // list first (a soft-deleted object still reads 200, so absence from the
@@ -112,7 +118,12 @@ export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void>
       deps.store.save();
     }
 
-    const next = snapshotOf(doc);
+    let next = snapshotOf(doc);
+    if (source.kind === "blocks") {
+      // Only track the requested blocks (a passage / set of paragraphs).
+      const keep = new Set(source.blockIds);
+      next = next.filter((s) => keep.has(s.id));
+    }
     if (JSON.stringify(next) === JSON.stringify(rec.snapshot)) return; // unchanged
 
     const diff = diffSnapshots(rec.snapshot, next);
@@ -122,6 +133,50 @@ export async function pollWatch(rec: WatchRecord, deps: PollDeps): Promise<void>
   } catch (err) {
     console.warn(`pollWatch: watch ${rec.objectId} failed: ${String(err)}`);
   }
+}
+
+/**
+ * Poll a QUERY watch: the set of objects matching a search/filter. The stored
+ * `snapshot` holds the matching objects as `{id, text:name}`, so a membership
+ * change (an object entering/leaving the result) or a name change is a diff.
+ * Never throws.
+ */
+async function pollQuery(rec: WatchRecord, source: WatchSource & { kind: "query" }, deps: PollDeps): Promise<void> {
+  try {
+    const items =
+      source.filters !== undefined
+        ? await deps.api.filteredSearch(rec.spaceId, { query: source.query, filters: source.filters })
+        : await deps.api.search(rec.spaceId, source.query ?? "");
+    const next: BlockSnap[] = items.map((o) => ({ id: o.id, text: o.name }));
+    if (JSON.stringify(next) === JSON.stringify(rec.snapshot)) return; // unchanged
+    const diff = diffSnapshots(rec.snapshot, next);
+    await deps.notify(rec, summarizeQueryChange(rec.label, diff));
+    rec.snapshot = next;
+    deps.store.save();
+  } catch (err) {
+    console.warn(`pollWatch (query): watch ${rec.objectId} failed: ${String(err)}`);
+  }
+}
+
+/** Human-readable summary for a query-watch change (objects entering/leaving). */
+export function summarizeQueryChange(
+  label: string,
+  diff: {
+    added: BlockSnap[];
+    removed: BlockSnap[];
+    changed: Array<{ id: string; text: string; oldText: string }>;
+  },
+): string {
+  const counts: string[] = [];
+  if (diff.added.length > 0) counts.push(`新增 ${diff.added.length} 个`);
+  if (diff.removed.length > 0) counts.push(`移出 ${diff.removed.length} 个`);
+  if (diff.changed.length > 0) counts.push(`改名 ${diff.changed.length} 个`);
+  const head = `订阅的查询『${label}』结果有更新：${counts.join("、") || "有变化"}。`;
+  const lines: string[] = [];
+  for (const o of diff.added.slice(0, 5)) lines.push(`- 新增：${o.text || o.id}（${o.id}）`);
+  for (const o of diff.removed.slice(0, 5)) lines.push(`- 移出：${o.text || o.id}（${o.id}）`);
+  for (const o of diff.changed.slice(0, 5)) lines.push(`- 改名：${o.oldText} → ${o.text}（${o.id}）`);
+  return lines.length > 0 ? `${head}\n${lines.join("\n")}` : head;
 }
 
 /**

@@ -1123,6 +1123,7 @@ describe("createAnytypeTools", () => {
         { id: "b3", text: "第二段内容" },
       ],
       cron: DEFAULT_CRON,
+      source: { kind: "object", id: "obj1" },
     });
     expect(store.save).toHaveBeenCalled();
     expect(res.content[0].text).toContain("已订阅");
@@ -1423,6 +1424,35 @@ describe("createAnytypeTools", () => {
   });
 
   // --- chat operations -----------------------------------------------------
+
+  it("anytype_watch add with filters creates a query subscription", async () => {
+    const api = fakeApi();
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(api, store), "anytype_watch"), {
+      action: "add",
+      filters: [{ condition: "in", property: "tag", value: ["重要"] }],
+    });
+    expect(res.content[0].text).toContain("已订阅");
+    const rec = (store.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(rec.source).toEqual({ kind: "query", filters: [{ condition: "in", property: "tag", value: ["重要"] }] });
+    expect(String(rec.objectId).startsWith("query:")).toBe(true);
+    expect(api.filteredSearch).toHaveBeenCalled();
+  });
+
+  it("anytype_watch add with id + blocks restricts to those blocks", async () => {
+    const api = fakeApi();
+    const store = fakeStore();
+    const res = await run(toolByName(mkTools(api, store), "anytype_watch"), {
+      action: "add",
+      id: "obj1",
+      blocks: ["b1"],
+    });
+    expect(res.content[0].text).toContain("块");
+    const rec = (store.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(rec.source).toEqual({ kind: "blocks", id: "obj1", blockIds: ["b1"] });
+    expect(rec.objectId).toBe("obj1");
+    expect(rec.snapshot.every((s: { id: string }) => s.id === "b1")).toBe(true);
+  });
 
   it("anytype_send_message sends to the CURRENT chat with an idempotency key", async () => {
     const api = fakeApi();

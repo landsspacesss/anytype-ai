@@ -6,6 +6,8 @@ import {
   WatchStore,
   snapshotOf,
   diffSnapshots,
+  queryWatchId,
+  sourceOf,
   type WatchRecord,
 } from "../src/watch/store.js";
 
@@ -104,6 +106,24 @@ describe("diffSnapshots", () => {
   });
 });
 
+describe("sourceOf / queryWatchId", () => {
+  it("sourceOf defaults a legacy record to an object source", () => {
+    expect(sourceOf({ objectId: "o1" })).toEqual({ kind: "object", id: "o1" });
+    expect(sourceOf({ objectId: "q", source: { kind: "query", query: "x" } })).toEqual({ kind: "query", query: "x" });
+  });
+
+  it("queryWatchId is stable for the same query and differs across queries", () => {
+    const a = queryWatchId(undefined, [{ condition: "in", property: "tag", value: ["重要"] }]);
+    const b = queryWatchId(undefined, [{ condition: "in", property: "tag", value: ["重要"] }]);
+    const c = queryWatchId(undefined, [{ condition: "in", property: "tag", value: ["别"] }]);
+    const d = queryWatchId("hello");
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(a).not.toBe(d);
+    expect(a.startsWith("query:")).toBe(true);
+  });
+});
+
 describe("WatchStore", () => {
   it("round-trips records through save/load", () => {
     const file = tmpFile();
@@ -144,6 +164,19 @@ describe("WatchStore", () => {
     const b = new WatchStore(file);
     b.load();
     expect(b.get("sp1", "obj1")?.prompt).toBe("总结这篇文章的变化");
+  });
+
+  it("round-trips a query/blocks source through save/load", () => {
+    const file = tmpFile();
+    const a = new WatchStore(file);
+    a.load();
+    a.upsert(rec({ objectId: "query:x", source: { kind: "query", filters: [{ condition: "in", property: "tag", value: ["重要"] }] } }));
+    a.upsert(rec({ objectId: "obj9", source: { kind: "blocks", id: "obj9", blockIds: ["b1", "b2"] } }));
+    a.save();
+    const b = new WatchStore(file);
+    b.load();
+    expect(b.get("sp1", "query:x")?.source).toEqual({ kind: "query", filters: [{ condition: "in", property: "tag", value: ["重要"] }] });
+    expect(b.get("sp1", "obj9")?.source).toEqual({ kind: "blocks", id: "obj9", blockIds: ["b1", "b2"] });
   });
 
   it("round-trips an image block's ref through save/load", () => {

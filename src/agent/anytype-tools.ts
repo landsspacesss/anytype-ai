@@ -5,8 +5,8 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import sharp from "sharp";
 import type { AnytypeClient } from "../anytype/client.js";
-import type { WatchRecord, WatchStore } from "../watch/store.js";
-import { snapshotOf } from "../watch/store.js";
+import type { BlockSnap, WatchRecord, WatchSource, WatchStore } from "../watch/store.js";
+import { queryWatchId, snapshotOf, sourceOf } from "../watch/store.js";
 import { describeCron, parseCron } from "../watch/cron.js";
 import { pollWatch } from "../watch/poller.js";
 import { webSearch } from "./web-search.js";
@@ -1245,12 +1245,30 @@ export function createAnytypeTools(deps: {
     name: "anytype_watch",
     label: "Subscribe to object changes",
     description:
-      "Subscribe this chat to changes on an Anytype object (a note/page). Each subscription has a cron schedule; the bot checks the object on that schedule (local time) and posts a notification into this chat when its content changes. Actions: \"add\" (with `id`, optional `cron`/`prompt`/`label`) to subscribe; \"schedule\" (with `id` and at least one of `cron`/`prompt`) to change the schedule or instruction of an existing subscription; \"check\" (with `id`) to check it right now; \"remove\" (with `id`) to unsubscribe; \"list\" to show the space's current subscriptions. Subscriptions survive restarts.",
-    promptSnippet: "anytype_watch — subscribe to (or list/schedule/check/remove) notifications when an object changes",
+      "Subscribe this chat to changes on Anytype content. WHAT to track: (a) a whole OBJECT — pass `id`; (b) specific BLOCKS (a passage/paragraphs) — pass `id` + `blocks:[blockIds]`; (c) a QUERY — pass `filters` (a FilterNode tree, e.g. a tag filter) and/or `query` (text) to watch the SET of matching objects (notify when objects enter/leave the result or get renamed). Each subscription has a cron schedule; the bot checks it on that schedule (local time) and posts a notification into this chat when it changed. Actions: \"add\" (need `id`, or `blocks`, or `query`/`filters`; optional `cron`/`prompt`/`label`); \"schedule\"/\"check\"/\"remove\" (need the subscription `id` shown by \"list\"); \"list\". Subscriptions survive restarts.",
+    promptSnippet: "anytype_watch — track an object / specific blocks / a query (tag filter etc.) on a cron; list/schedule/check/remove",
     promptGuidelines: GUIDELINES,
     parameters: Type.Object({
       action: Type.String({ description: "One of: add, remove, list, schedule, check." }),
-      id: Type.Optional(Type.String({ description: "The object id (required for add/remove/schedule/check)." })),
+      id: Type.Optional(
+        Type.String({
+          description:
+            "The object id to watch (for add), or the subscription id (for remove/schedule/check — see `list`).",
+        }),
+      ),
+      blocks: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "For add with `id`: restrict tracking to these block ids (a passage / set of paragraphs) instead of the whole object.",
+        }),
+      ),
+      query: Type.Optional(Type.String({ description: "For add: a text query; watch the SET of objects matching it." })),
+      filters: Type.Optional(
+        Type.Unknown({
+          description:
+            "For add: a FilterNode[] (or group) — e.g. [{\"condition\":\"in\",\"property\":\"tag\",\"value\":[\"重要\"]}] — to watch the set of objects matching a field filter.",
+        }),
+      ),
       label: Type.Optional(Type.String({ description: "Optional human label for the subscription." })),
       cron: Type.Optional(
         Type.String({
@@ -1268,27 +1286,56 @@ export function createAnytypeTools(deps: {
     async execute(_toolCallId, params) {
       try {
         if (params.action === "add") {
-          if (!params.id) return textResult("anytype_watch: `id` is required for action \"add\".");
           const cron = params.cron ?? defaultWatchCron;
           if (!parseCron(cron)) return textResult(`anytype_watch: ${CRON_HELP}`);
-          const doc = await api.getObjectRaw(spaceId, params.id);
-          const label = params.label ?? objectName(doc);
-          const name = label || params.id;
-          const record: WatchRecord = {
-            objectId: params.id,
-            spaceId,
-            chatId,
-            label: name,
-            snapshot: snapshotOf(doc),
-            cron,
-          };
+          const isQuery = params.filters !== undefined || (typeof params.query === "string" && params.query.length > 0);
+          let objectId: string;
+          let label: string;
+          let source: WatchSource;
+          let snapshot: BlockSnap[];
+          if (isQuery) {
+            source = { kind: "query" };
+            if (typeof params.query === "string" && params.query.length > 0) source.query = params.query;
+            if (params.filters !== undefined) source.filters = params.filters;
+            objectId = queryWatchId(source.query, source.filters);
+            label = params.label ?? `查询: ${source.query || JSON.stringify(source.filters)}`;
+            const items =
+              source.filters !== undefined
+                ? await api.filteredSearch(spaceId, { query: source.query, filters: source.filters })
+                : await api.search(spaceId, source.query ?? "");
+            snapshot = items.map((o) => ({ id: o.id, text: o.name }));
+          } else {
+            if (!params.id) {
+              return textResult("anytype_watch: `id` (or `blocks`, or `query`/`filters`) is required for action \"add\".");
+            }
+            const doc = await api.getObjectRaw(spaceId, params.id);
+            objectId = params.id;
+            if (params.blocks && params.blocks.length > 0) {
+              const ids = params.blocks.filter((x) => typeof x === "string" && x.length > 0);
+              if (ids.length === 0) return textResult("anytype_watch: `blocks` must be a non-empty array of block ids.");
+              source = { kind: "blocks", id: params.id, blockIds: ids };
+              const keep = new Set(ids);
+              snapshot = snapshotOf(doc).filter((s) => keep.has(s.id));
+              label = params.label ?? `${objectName(doc) || params.id}（${ids.length} 个块）`;
+            } else {
+              source = { kind: "object", id: params.id };
+              snapshot = snapshotOf(doc);
+              label = params.label ?? objectName(doc);
+            }
+          }
+          const name = label || objectId;
+          const record: WatchRecord = { objectId, spaceId, chatId, label: name, snapshot, cron, source };
           const prompt = params.prompt?.trim();
           if (prompt) record.prompt = prompt;
           store.upsert(record);
           store.save();
           onWatchChange?.();
           const promptNote = prompt ? `，变化时按指令处理：${prompt}` : "";
-          return textResult(`已订阅『${name}』，将${describeCron(cron)}检查${promptNote}；可通过 schedule 修改`);
+          const what =
+            source.kind === "query" ? `查询『${source.query || JSON.stringify(source.filters)}』`
+            : source.kind === "blocks" ? `『${name}』的 ${source.blockIds.length} 个块`
+            : `『${name}』`;
+          return textResult(`已订阅${what}，将${describeCron(cron)}检查${promptNote}；订阅 id=${objectId}，可通过 schedule 修改`);
         }
         if (params.action === "remove") {
           if (!params.id) return textResult("anytype_watch: `id` is required for action \"remove\".");
@@ -1362,7 +1409,9 @@ export function createAnytypeTools(deps: {
           const lines = records.map((r, i) => {
             const p = r.prompt?.trim();
             const promptNote = p ? ` · 指令：${p.length > 30 ? `${p.slice(0, 30)}…` : p}` : "";
-            return `${i + 1}. 『${r.label}』 — ${describeCron(r.cron ?? "")} — ${r.objectId}${promptNote}`;
+            const src = sourceOf(r);
+            const kind = src.kind === "query" ? "查询" : src.kind === "blocks" ? `块(${src.blockIds.length})` : "对象";
+            return `${i + 1}. [${kind}] 『${r.label}』 — ${describeCron(r.cron ?? "")} — ${r.objectId}${promptNote}`;
           });
           return textResult(`${records.length} 个订阅：\n${lines.join("\n")}`);
         }

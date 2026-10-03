@@ -96,6 +96,76 @@ describe("pollWatch", () => {
   });
 });
 
+describe("query + blocks sources", () => {
+  it("query watch notifies when an object enters the result set", async () => {
+    const store = new WatchStore(tmpFile());
+    store.load();
+    store.upsert({
+      objectId: "query:abc", spaceId: "sp1", chatId: "c", label: "tag:重要",
+      snapshot: [{ id: "o1", text: "A" }], cron: "*/30 * * * *",
+      source: { kind: "query", filters: [{ condition: "in", property: "tag", value: ["重要"] }] },
+    });
+    const rec = store.get("sp1", "query:abc")!;
+    const api = {
+      filteredSearch: vi.fn(async () => [
+        { id: "o1", name: "A", type: "page" },
+        { id: "o2", name: "B", type: "page" },
+      ]),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(rec, { store, api, notify });
+
+    expect(api.filteredSearch).toHaveBeenCalledWith("sp1", { query: undefined, filters: [{ condition: "in", property: "tag", value: ["重要"] }] });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect((notify.mock.calls[0] as unknown as [WatchRecord, string])[1]).toContain("新增 1 个");
+    expect(store.get("sp1", "query:abc")?.snapshot).toEqual([
+      { id: "o1", text: "A" },
+      { id: "o2", text: "B" },
+    ]);
+  });
+
+  it("query watch does not notify when the result set is unchanged", async () => {
+    const store = new WatchStore(tmpFile());
+    store.load();
+    store.upsert({
+      objectId: "query:x", spaceId: "sp1", chatId: "c", label: "q",
+      snapshot: [{ id: "o1", text: "A" }], cron: "*/30 * * * *", source: { kind: "query", query: "hi" },
+    });
+    const api = { search: vi.fn(async () => [{ id: "o1", name: "A", type: "page" }]) } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+    await pollWatch(store.get("sp1", "query:x")!, { store, api, notify });
+    expect(api.search).toHaveBeenCalledWith("sp1", "hi");
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("blocks watch only tracks the listed blocks", async () => {
+    const store = new WatchStore(tmpFile());
+    store.load();
+    store.upsert({
+      objectId: "obj1", spaceId: "sp1", chatId: "c", label: "passage",
+      snapshot: [{ id: "b1", text: "old" }], cron: "*/30 * * * *",
+      source: { kind: "blocks", id: "obj1", blockIds: ["b1"] },
+    });
+    const rec = store.get("sp1", "obj1")!;
+    // b1 changed AND an untracked b2 was added → only b1 is in the watch
+    const api = {
+      getObjectRaw: vi.fn(async () => ({
+        blocks: [
+          { id: "b1", type: "paragraph", text: "NEW" },
+          { id: "b2", type: "paragraph", text: "added" },
+        ],
+      })),
+    } as unknown as AnytypeClient;
+    const notify = vi.fn(async () => {});
+
+    await pollWatch(rec, { store, api, notify });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(store.get("sp1", "obj1")?.snapshot).toEqual([{ id: "b1", text: "NEW" }]);
+  });
+});
+
 describe("pollWatches", () => {
   it("does not notify when a freshly-added watch is unchanged", async () => {
     const store = seededStore([{ id: "b1", text: "hello" }]);

@@ -183,7 +183,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `anytype_insert_markdown` | **精确插入** Markdown 到对象（`before`/`after` 指定位置或 `position` 首/尾；支持表格等）|
 | `anytype_templates` | 模板**列/建/删**（`action: list/create/delete`）；`anytype_create_note` 可带 `template_id` 套用 |
 | `anytype_send_message` / `anytype_send_file` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / **上传并发文件（一步）** / 加 emoji 反应 / 改 / 删消息。发消息可带附件（`attachments` = 文件对象 id 数组）；`anytype_send_file(path\|url, name?, text?)` 给个本地路径或 URL 就上传并直接发进当前聊天，不用先 `anytype_upload_file` |
-| `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
+| `anytype_watch` | **订阅变化**，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。可追踪：**整个对象**（`id`）/ **某几个块/段落**（`id` + `blocks:[块id…]`）/ **一个查询**（`filters` 过滤器如标签、或 `query` 全文 → 盯**匹配集合**，对象进出/改名即通知）。**可带 `prompt` 指令**——变化时让 AI 去处理；不填则只发 diff |
 | `web_search` | **联网搜索**当前信息（走 DeepSeek 托管的 Anthropic `web_search`，**同一个 key**；返回答案+来源链接）|
 | `subagent` | **派子代理（一次性）**：把独立子任务交给一个全新隔离会话跑（带同样工具、**不能再派子代理**），返回结果。适合「分别总结多篇 / 批量搜读」——保持主上下文干净。每次是一次完整模型调用（费 token）|
 | `agent` | **常驻命名子代理**（类 Claude Code 团队）：`action: spawn/message/list/kill`。`spawn` 一个**有名字**的子代理，之后可**反复 `message`** 它——**它保留自己的对话记忆**（跨轮存活）。适合「让它持续跟进一件事，我陆续追加要求」。⚠️ 子代理**看不到当前聊天**，指令要自包含；不能再派生；闲置 `SUBAGENT_IDLE_MS` 后回收，上限 `MAX_SUBAGENTS`（默认 5）|
@@ -197,6 +197,12 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 > **订阅可带指令（重点）**：订阅时给 `prompt`（如 `总结这篇文章的变化`、`检查未完成待办并提醒我`），cron 命中且检测到变化时，AI 会**自己去读该对象、按指令处理**，把结果发回聊天——不是干巴巴地念 diff。典型用法：**`订阅"日常试卷1"，每天9点总结一下变化`**。
 
 > **图片变化也能测**：diff 不只看文字——图片块会记它的 `object_id`，所以**换图**（同一块换了张图）也会触发，摘要里给 `换图：旧id → 新id`；新增图片给 `新增图片 object_id=…`。触发语带上这些 id，AI 就能**只取变了的图**（`anytype_download_images`）再处理，而不是重读整页。局限：靠 `object_id` 变化判定；若 Anytype 原地改同一文件对象（同 id 换字节）则测不出（需下载比字节，太重，未做）。
+
+> **可追踪的"源"（变化订阅泛化）**：
+> - **整对象**（默认）：`anytype_watch add id=<对象id>` —— 该对象任一**块**增/改/删都算变化（块级，按 block id）。
+> - **指定块/段落**：`add id=<对象id> blocks=["b1","b2"]` —— 只盯这几个块，别的块变不动它。
+> - **查询（标签/类型/任意 filter）**：`add filters=[{"condition":"in","property":"tag","value":["重要"]}]` 或 `add query="关键词"` —— 盯**匹配集合**：有对象**进入/移出**结果集、或匹配对象**改名**就通知（发的是对象名+id）。订阅 id 是 `query:<hash>`，`list` 里能看到。
+> - collection 成员追踪尚未做（第二步，需先确认成员读取）；目前用的 `filters` 已能覆盖绝大多数"按标签/类型"的场景。
 
 
 **看扫描件/考卷的最佳流程**（模型会自动这么做）：`anytype_read_object` 看整页概览 → `anytype_download_images` 拿原图 → `crop_image` 裁剪区域放大看清细节。

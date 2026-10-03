@@ -1,5 +1,54 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+
+/**
+ * What a watch tracks:
+ * - `object`  — every block of one object (the original behavior).
+ * - `blocks`  — only the listed block ids within one object (a passage / set of
+ *               paragraphs).
+ * - `query`   — the SET of objects matching a search query and/or FilterNode
+ *               tree (e.g. a tag filter). A change = an object entering/leaving
+ *               the result set, or a matching object's name changing.
+ * Absent `source` on a record means `{ kind: "object", id: objectId }` (legacy
+ * records), so old subscriptions keep working.
+ */
+export type WatchSource =
+  | { kind: "object"; id: string }
+  | { kind: "blocks"; id: string; blockIds: string[] }
+  | { kind: "query"; query?: string; filters?: unknown };
+
+/** A stable, filesystem/key-safe id for a query watch (used as its record key). */
+export function queryWatchId(query?: string, filters?: unknown): string {
+  const canon = JSON.stringify({ q: query ?? "", f: filters ?? null });
+  return "query:" + crypto.createHash("sha1").update(canon).digest("hex").slice(0, 12);
+}
+
+/** The effective source of a record (legacy records without one watch their object). */
+export function sourceOf(rec: { objectId: string; source?: WatchSource }): WatchSource {
+  return rec.source ?? { kind: "object", id: rec.objectId };
+}
+
+/** Parse a persisted `source` field; undefined when absent or invalid. */
+function parseSource(raw: unknown): WatchSource | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const s = raw as Record<string, unknown>;
+  if (s.kind === "query") {
+    const out: { kind: "query"; query?: string; filters?: unknown } = { kind: "query" };
+    if (typeof s.query === "string") out.query = s.query;
+    if (s.filters !== undefined) out.filters = s.filters;
+    return out;
+  }
+  if (s.kind === "blocks" && typeof s.id === "string" && Array.isArray(s.blockIds)) {
+    return {
+      kind: "blocks",
+      id: s.id,
+      blockIds: s.blockIds.filter((x): x is string => typeof x === "string"),
+    };
+  }
+  if (s.kind === "object" && typeof s.id === "string") return { kind: "object", id: s.id };
+  return undefined;
+}
 
 /** A compact snapshot of one block: its id plus its text (fingerprint + diff unit). */
 export interface BlockSnap {
@@ -29,6 +78,8 @@ export interface WatchRecord {
   label: string;
   snapshot: BlockSnap[];
   cron: string;
+  /** What to track. Absent → `{kind:"object", id: objectId}` (legacy records). */
+  source?: WatchSource;
   /**
    * Optional instruction for the AI to run when this object changes (e.g.
    * "总结这篇文章的变化"). When set, a change triggers an agent turn in the
@@ -176,6 +227,8 @@ export class WatchStore {
         if (typeof rec.lastFiredMinute === "string") record.lastFiredMinute = rec.lastFiredMinute;
         if (typeof rec.misses === "number" && rec.misses > 0) record.misses = rec.misses;
         if (typeof rec.prompt === "string" && rec.prompt.trim().length > 0) record.prompt = rec.prompt.trim();
+        const src = parseSource(rec.source);
+        if (src) record.source = src;
         this.records.set(this.key(rec.spaceId, rec.objectId), record);
       }
     } catch {
