@@ -66,6 +66,15 @@ aibot up -d ai-bot            # 起
 
 它做两件事：`docker build -t anytype-ai-bot:latest -t anytype-ai-bot:<commit>`（镜像打上 git 短 sha，便于查线上跑的是哪次提交）+ 用合并 compose `up -d --force-recreate --no-deps ai-bot`。路径不同可 `BOT_REPO=… ANYTYPE_DIR=… ./deploy.sh`。
 
+**改用 GHCR 镜像（不本地构建）**：镜像由 GitHub Actions 在 push main / 打 `v*` tag 时自动推到 `ghcr.io/landsspacesss/anytype-ai`（仓库公开 → **匿名可拉**，不用登录）。服务器上：
+
+```bash
+/home/landspace/anytype-ai-bot/deploy.sh --pull          # 拉 :latest 并重建
+/home/landspace/anytype-ai-bot/deploy.sh --pull v1.2.3   # 指定 tag（需先在 GitHub 打 tag）
+```
+
+`--pull` = `docker pull` → 重打成本地 `anytype-ai-bot:latest` → `up --no-build`。适合**源码不在本机**或想跳过本地构建。默认（无参数）仍是本地构建，改代码后立刻可用，不依赖 CI。
+
 > 手动等价命令（`deploy.sh` 内容）：
 > ```bash
 > cd /home/landspace/anytype-ai-bot && docker build -t anytype-ai-bot:latest .
