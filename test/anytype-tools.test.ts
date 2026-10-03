@@ -169,9 +169,9 @@ function mkToolsWithAgent(api: AnytypeClient, registry: SubagentRegistry) {
 }
 
 describe("createAnytypeTools", () => {
-  it("returns the thirty-one tools (no subagent) with expected names", () => {
+  it("returns the thirty-two tools (no subagent) with expected names", () => {
     const tools = mkTools(fakeApi());
-    expect(tools).toHaveLength(31);
+    expect(tools).toHaveLength(32);
     expect(tools.map((t) => t.name)).not.toContain("subagent");
     expect(tools.map((t) => t.name)).toEqual([
       "anytype_list_objects",
@@ -198,6 +198,7 @@ describe("createAnytypeTools", () => {
       "anytype_upload_file",
       "anytype_watch",
       "anytype_send_message",
+      "anytype_send_file",
       "anytype_react",
       "anytype_edit_message",
       "anytype_delete_message",
@@ -208,12 +209,12 @@ describe("createAnytypeTools", () => {
     ]);
   });
 
-  it("adds a thirty-second `subagent` tool when runSubagent is provided", () => {
+  it("adds a thirty-third `subagent` tool when runSubagent is provided", () => {
     const tools = mkToolsWithSubagent(fakeApi());
-    expect(tools).toHaveLength(32);
+    expect(tools).toHaveLength(33);
     const names = tools.map((t) => t.name);
     expect(names).toContain("subagent");
-    // The subagent tool is appended after the base 31.
+    // The subagent tool is appended after the base 32.
     expect(names[names.length - 1]).toBe("subagent");
   });
 
@@ -241,21 +242,21 @@ describe("createAnytypeTools", () => {
     expect(res.content[0].text).toContain("boom 500");
   });
 
-  it("adds a thirty-third `agent` tool when BOTH runSubagent and agentRegistry are provided", () => {
+  it("adds a thirty-fourth `agent` tool when BOTH runSubagent and agentRegistry are provided", () => {
     const tools = createAnytypeTools({
       ...baseDeps(fakeApi()),
       runSubagent: async () => "x",
       agentRegistry: fakeRegistry().registry,
     });
-    expect(tools).toHaveLength(33);
+    expect(tools).toHaveLength(34);
     const names = tools.map((t) => t.name);
     expect(names).toContain("agent");
     expect(names[names.length - 1]).toBe("agent");
   });
 
-  it("omits the `agent` tool (count 32) when agentRegistry is absent", () => {
+  it("omits the `agent` tool (count 33) when agentRegistry is absent", () => {
     const tools = mkToolsWithSubagent(fakeApi());
-    expect(tools).toHaveLength(32);
+    expect(tools).toHaveLength(33);
     expect(tools.map((t) => t.name)).not.toContain("agent");
   });
 
@@ -1444,6 +1445,33 @@ describe("createAnytypeTools", () => {
     const call = (api.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[4]).toEqual(["file-1", "file-2"]);
     expect(res.content[0].text).toContain("2 attachment");
+  });
+
+  it("anytype_send_file uploads a local path then sends it as an attachment", async () => {
+    const api = fakeApi();
+    const res = await run(toolByName(mkTools(api), "anytype_send_file"), {
+      path: "/workspace/x/chart.png",
+      name: "chart.png",
+      text: "这是结果图",
+    });
+    expect(api.uploadFile).toHaveBeenCalledWith(SPACE, { path: "/workspace/x/chart.png", name: "chart.png" });
+    const sent = (api.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sent[0]).toBe(SPACE);
+    expect(sent[1]).toBe(CHAT);
+    expect(sent[2]).toBe("这是结果图");
+    expect(sent[4]).toEqual(["file-1"]);
+    expect(res.content[0].text).toContain("file-1");
+  });
+
+  it("anytype_send_file accepts a url and requires one of path/url", async () => {
+    const api = fakeApi();
+    await run(toolByName(mkTools(api), "anytype_send_file"), { url: "https://x/a.pdf" });
+    expect(api.uploadFile).toHaveBeenCalledWith(SPACE, { url: "https://x/a.pdf", name: undefined });
+
+    const bad = await run(toolByName(mkTools(api), "anytype_send_file"), {});
+    expect(bad.content[0].text).toContain("provide `path` or `url`");
+    const both = await run(toolByName(mkTools(api), "anytype_send_file"), { path: "a", url: "b" });
+    expect(both.content[0].text).toContain("only one");
   });
 
   it("anytype_react calls reactToMessage on the current chat", async () => {

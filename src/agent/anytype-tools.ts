@@ -1404,6 +1404,38 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const sendFile = defineTool({
+    name: "anytype_send_file",
+    label: "Send a file/image into the current chat",
+    description:
+      "Upload a local file or a remote URL and post it as an attachment in the CURRENT chat, in one step. Use this (rather than anytype_upload_file + anytype_send_message) to hand the user an image or file — e.g. a result you produced, a downloaded document, or a chart. Provide EITHER `path` (a local path, e.g. under the workspace) OR `url`; optional `name` (override filename) and `text` (a caption). Files uploaded/downloaded earlier via anytype_download_file live in the workspace and can be re-sent this way.",
+    promptSnippet: "anytype_send_file — upload a local path or URL and post it into the current chat (one step)",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      path: Type.Optional(Type.String({ description: "Local file path to upload and send (relative to the workspace or absolute)." })),
+      url: Type.Optional(Type.String({ description: "Remote URL to fetch and send (alternative to `path`)." })),
+      name: Type.Optional(Type.String({ description: "Optional filename to use (e.g. \"report.pdf\")." })),
+      text: Type.Optional(Type.String({ description: "Optional caption to send alongside the file." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const pathArg = typeof params.path === "string" ? params.path.trim() : "";
+        const urlArg = typeof params.url === "string" ? params.url.trim() : "";
+        if (!pathArg && !urlArg) return textResult("anytype_send_file: provide `path` or `url`.");
+        if (pathArg && urlArg) return textResult("anytype_send_file: provide only one of `path` or `url`.");
+        const name = typeof params.name === "string" && params.name.trim() ? params.name.trim() : undefined;
+        const caption = typeof params.text === "string" ? params.text : "";
+        const file = await api.uploadFile(spaceId, pathArg ? { path: pathArg, name } : { url: urlArg, name });
+        if (!file.id) return textResult("anytype_send_file: upload returned no id.");
+        const key = `file-${chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await api.sendMessage(spaceId, chatId, caption, key, [file.id]);
+        return textResult(`Uploaded and sent to the current chat (${chatId}) — file object ${file.id}.`);
+      } catch (err) {
+        return textResult(`anytype_send_file failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const react = defineTool({
     name: "anytype_react",
     label: "React to a chat message",
@@ -1761,6 +1793,7 @@ export function createAnytypeTools(deps: {
     uploadFile,
     watch,
     sendMessage,
+    sendFile,
     react,
     editMessage,
     deleteMessage,

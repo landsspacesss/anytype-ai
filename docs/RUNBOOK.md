@@ -166,7 +166,7 @@ docker exec anytype-ai-bot-1 sh -c 'cat > /workspace/<space-id>/AGENTS.md' < 新
 | `anytype_upload_file` | **上传文件**（给 URL 或容器内文件路径）|
 | `anytype_insert_markdown` | **精确插入** Markdown 到对象（`before`/`after` 指定位置或 `position` 首/尾；支持表格等）|
 | `anytype_templates` | 模板**列/建/删**（`action: list/create/delete`）；`anytype_create_note` 可带 `template_id` 套用 |
-| `anytype_send_message` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / 加 emoji 反应 / 改 / 删消息。**发消息可带附件**（`attachments` = 文件对象 id 数组，先用 `anytype_upload_file` 上传拿 id）——图片/文件会显示在消息里 |
+| `anytype_send_message` / `anytype_send_file` / `anytype_react` / `anytype_edit_message` / `anytype_delete_message` | **聊天操作**：在当前聊天发消息 / **上传并发文件（一步）** / 加 emoji 反应 / 改 / 删消息。发消息可带附件（`attachments` = 文件对象 id 数组）；`anytype_send_file(path\|url, name?, text?)` 给个本地路径或 URL 就上传并直接发进当前聊天，不用先 `anytype_upload_file` |
 | `anytype_watch` | **订阅**某篇笔记，按 **cron 计划**检查（`action: add/remove/list/schedule/check`）。**可带 `prompt` 指令**——变化时让 AI 去读该对象并按指令处理；不填则只发 diff |
 | `web_search` | **联网搜索**当前信息（走 DeepSeek 托管的 Anthropic `web_search`，**同一个 key**；返回答案+来源链接）|
 | `subagent` | **派子代理（一次性）**：把独立子任务交给一个全新隔离会话跑（带同样工具、**不能再派子代理**），返回结果。适合「分别总结多篇 / 批量搜读」——保持主上下文干净。每次是一次完整模型调用（费 token）|
