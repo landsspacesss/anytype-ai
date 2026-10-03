@@ -2,15 +2,17 @@ name: publish image
 
 # Build the bot image and push it to GitHub Container Registry (GHCR) so the
 # server can `docker pull ghcr.io/landsspacesss/anytype-ai:latest` instead of
-# building locally. Runs on every push to main, on version tags (v1.2.3), and
-# on manual dispatch.
+# building locally.
+#
+# Builds only when a version TAG is pushed (v1.2.3) — NOT on every push to main.
+# (Manual "Run workflow" is also available as an escape hatch.) This keeps GHCR
+# for actual releases; day-to-day deploys use the local `./deploy.sh`.
 #
 # The repo is public, so the published package is public too — pulling needs no
 # `docker login`. Auth here uses the built-in GITHUB_TOKEN (no extra secrets).
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -39,11 +41,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
+            type=raw,value=latest
 
       - name: Build + push
         uses: docker/build-push-action@v6
