@@ -273,13 +273,28 @@ export function ensureWorkflowsConfig(agentDir: string, srcRoot: string = WORKFL
   }
 }
 
-/** Find a model by id, preferring the deepseek provider. */
-function resolveModel(registry: ModelRegistry, modelId: string): unknown | undefined {
-  const all = (registry as unknown as { getAll?: () => Array<{ id: string; provider?: string }> }).getAll?.() ?? [];
-  return (
-    all.find((m) => m.id === modelId && m.provider === "deepseek") ??
-    all.find((m) => m.id === modelId)
-  );
+/**
+ * Find a model by id, preferring the deepseek provider. Accepts either a bare
+ * registry id (`deepseek-flash`, `meta/llama-3.1-70b-instruct`) or the
+ * `provider/id` form the `/model` list shows (`deepseek/deepseek-flash`,
+ * `nvidia/meta/llama-3.1-70b-instruct`) — the two must agree, or a user
+ * copying a listed id would resolve nothing.
+ */
+export function resolveModel(registry: ModelRegistry, modelId: string): unknown | undefined {
+  const all =
+    (registry as unknown as { getAll?: () => Array<{ id: string; provider?: string }> }).getAll?.() ?? [];
+  const prefer = (ms: Array<{ id: string; provider?: string }>) =>
+    ms.find((m) => m.provider === "deepseek") ?? ms[0];
+  const exact = all.filter((m) => m.id === modelId);
+  if (exact.length > 0) return prefer(exact);
+  const slash = modelId.indexOf("/");
+  if (slash > 0) {
+    const provider = modelId.slice(0, slash);
+    const id = modelId.slice(slash + 1);
+    const qualified = all.filter((m) => m.provider === provider && m.id === id);
+    if (qualified.length > 0) return prefer(qualified);
+  }
+  return undefined;
 }
 
 /**

@@ -9,7 +9,7 @@ import {
   isInterruptibleTool,
   type PiClientOptions,
 } from "../src/agent/pi-session.js";
-import { CONSOLE_TOOLS, effectiveToolNames, buildSessionResourceLoader, TextSegmenter } from "../src/agent/pi-session.js";
+import { CONSOLE_TOOLS, effectiveToolNames, buildSessionResourceLoader, TextSegmenter, resolveModel } from "../src/agent/pi-session.js";
 import type { ManagedClient } from "../src/session/manager.js";
 
 // Type-only guarantee that createPiClient is a ManagedClient factory. This is
@@ -24,6 +24,42 @@ describe("createPiClient (shape)", () => {
   // test that exercises the real SDK end-to-end.
   it("is exported as a factory function", () => {
     expect(typeof createPiClient).toBe("function");
+  });
+});
+
+describe("resolveModel", () => {
+  const reg = (models: Array<{ id: string; provider: string }>) =>
+    ({ getAll: () => models }) as never;
+
+  it("resolves a bare id (and prefers deepseek on a tie)", () => {
+    const r = reg([
+      { id: "deepseek-flash", provider: "deepseek" },
+      { id: "meta/llama-3.1-70b-instruct", provider: "nvidia" },
+    ]);
+    expect(resolveModel(r, "deepseek-flash")).toMatchObject({ id: "deepseek-flash" });
+    expect(resolveModel(r, "meta/llama-3.1-70b-instruct")).toMatchObject({ provider: "nvidia" });
+  });
+
+  it("resolves the provider/id form shown by /model", () => {
+    const r = reg([
+      { id: "deepseek-flash", provider: "deepseek" },
+      { id: "meta/llama-3.1-70b-instruct", provider: "nvidia" },
+      { id: "nvidia/llama-3.3-nemotron-super-49b-v1", provider: "nvidia" },
+    ]);
+    expect(resolveModel(r, "deepseek/deepseek-flash")).toMatchObject({ id: "deepseek-flash" });
+    expect(resolveModel(r, "nvidia/meta/llama-3.1-70b-instruct")).toMatchObject({
+      id: "meta/llama-3.1-70b-instruct",
+    });
+    // An id that itself contains a slash: provider prefix + full id.
+    expect(resolveModel(r, "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1")).toMatchObject({
+      id: "nvidia/llama-3.3-nemotron-super-49b-v1",
+    });
+  });
+
+  it("returns undefined for an unknown id", () => {
+    const r = reg([{ id: "deepseek-flash", provider: "deepseek" }]);
+    expect(resolveModel(r, "nope")).toBeUndefined();
+    expect(resolveModel(r, "other/nope")).toBeUndefined();
   });
 });
 
