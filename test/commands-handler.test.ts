@@ -286,11 +286,33 @@ describe("handleCommand", () => {
     expect(reply).toMatch(/用法/);
   });
 
+  it("/stop aborts the in-flight turn when busy", async () => {
+    const client = fakeClient({ busy: true });
+    const { context } = ctx(client);
+    const reply = await handleCommand("stop", "", context);
+    expect(client.abort).toHaveBeenCalledTimes(1);
+    expect(reply).toContain("已停止");
+  });
+
+  it("/stop is a no-op when nothing is running", async () => {
+    const client = fakeClient({ busy: false });
+    const { context } = ctx(client);
+    const reply = await handleCommand("stop", "", context);
+    expect(client.abort).not.toHaveBeenCalled();
+    expect(reply).toContain("没有正在进行的回合");
+  });
+
+  it("/stop with no live client reports nothing to stop", async () => {
+    const { context } = ctx(undefined);
+    const reply = await handleCommand("stop", "", context);
+    expect(reply).toContain("没有正在进行的回合");
+  });
+
   it("/help lists the commands", async () => {
     const { context } = ctx(fakeClient());
     const reply = await handleCommand("help", "", context);
     expect(reply).toBe(HELP_TEXT);
-    for (const c of ["/new", "/clear", "/compact", "/model", "/effort", "/yolo", "/interrupt", "/help"]) {
+    for (const c of ["/new", "/clear", "/compact", "/model", "/effort", "/yolo", "/interrupt", "/stop", "/help"]) {
       expect(reply).toContain(c);
     }
   });

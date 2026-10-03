@@ -90,6 +90,7 @@ export const HELP_TEXT = [
   "/approve [all] — 批准待批准的操作（all=本回合剩余全放行）",
   "/deny — 拒绝待批准的操作",
   "/interrupt [now|step] — 打断策略：now=立刻打断，step=等当前这一步结束（默认）",
+  "/stop — 立即停止当前回合（正在思考/回复时）",
   "/join <链接> — 加入一个空间（邀请链接）或接入 1:1 控制台（1:1 链接）",
   "/run <工作流> [k=v …] — 运行一个工作流（不带参数=列出可用工作流；--resume <id> 从断点续跑）",
   "/runs — 列出最近的工作流运行",
@@ -218,6 +219,15 @@ export async function handleCommand(
       }
       const applied = await ctx.setInterruptPolicy(policy);
       return `打断策略已设为：${interruptLabel(applied)}（立即生效）`;
+    }
+
+    case "stop": {
+      // Immediately abort the in-flight turn (thinking or mid-reply),
+      // regardless of the interrupt policy. No live/busy client → nothing to stop.
+      const c = ctx.getClient();
+      if (!c || !c.busy) return "当前没有正在进行的回合。";
+      await c.abort();
+      return "已停止当前回合。";
     }
 
     case "join": {
