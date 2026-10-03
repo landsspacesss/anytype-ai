@@ -227,7 +227,7 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 
 ## 默认技能
 
-镜像内置 **7 个默认 pi 技能**（源码在 `docker/skills/`，启动时由 `ensureSkillsConfig` 拷进 pi 的 agent 目录）。技能是**模型自动触发**的——bot 从每个技能的 `description` 判断当前任务是否匹配，匹配就自己选用；你也可以**点名**（如「用 pdf-to-note 把附件整理成笔记」）。
+镜像内置 **8 个默认 pi 技能**（源码在 `docker/skills/`，启动时由 `ensureSkillsConfig` 拷进 pi 的 agent 目录）。技能是**模型自动触发**的——bot 从每个技能的 `description` 判断当前任务是否匹配，匹配就自己选用；你也可以**点名**（如「用 pdf-to-note 把附件整理成笔记」）。
 
 | 技能 | 作用 |
 |---|---|
@@ -238,6 +238,7 @@ bot 还在跑一个回合时，你**再发一条**（或 @bot）会**打断当�
 | `generate-quiz` | 从某页生成测验/抽认卡 |
 | `spreadsheet-to-note` | .xlsx/.csv → Markdown 表格笔记（**不支持** .xls 老格式）|
 | `creating-skills` | meta：教 bot 按 Agent Skills 规范写新 `SKILL.md` |
+| `model-provider-config` | 教 bot 改 `/root/.pi/agent/models.json`：新增/修改 provider（API 地址、key、模型清单）。改完 **`/new` 或重启**才生效 |
 
 **加一个技能** = 在 `docker/skills/<名字>/SKILL.md` 写好，然后 **rebuild 镜像**。注意 `ensureSkillsConfig` **只拷 `SKILL.md`**——技能目录里的**其它文件不会进容器**，所以脚本/模板要**内联进 `SKILL.md`**（或用其它方式带进镜像）。
 
@@ -365,7 +366,7 @@ bot 启动时若**尚未配置控制台**，会在日志里打印**它自己的*
 | `shell` | `run`（命令串，**必填**）、可选 `cwd` | stdout（超 8000 字符截断）|
 | `anytype` | `op`（必填）+ 该 op 参数；可选 `space`（缺省=触发聊天的空间）。已实现 op：`read_object`(`id`)、`search`(`query`)、`list_objects`、`create_note`(`name`/`markdown`)、`send_message`(`chat`/`text`) | 结果文本 / JSON |
 | `http` | `url`（**必填**）、可选 `method`（默认 `GET`）/ `headers` / `body` | 响应体（截断）|
-| `agent` | `prompt`（**必填**）、可选 `space` / `tools` / `model` | 绑目标 space 的一次性子会话返回的**文本**。`model` 覆盖该步模型（用 `/model` 列出的 id），`tools` 限定该步可用工具 |
+| `agent` | `prompt`（**必填**）、可选 `space` / `tools` / `model` / `fallback` | 绑目标 space 的一次性子会话返回的**文本**。`model` 覆盖该步模型（用 `/model` 列出的 id）；`fallback` 是**备用模型**（主模型报错或返回空时自动改用）；`tools` 限定该步可用工具 |
 
 **审批**：
 

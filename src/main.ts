@@ -250,6 +250,7 @@ async function main(): Promise<void> {
     api,
     spaceId: chatTargets.get(chatId)?.spaceId ?? "",
     workspaceDir: cfg.agentWorkspaceRoot,
+    log: (m) => console.log(`workflow(${chatId}): ${m}`),
     runAgent: async (space, prompt, tools, model) => {
       const c = await sessions.ensure(chatId);
       if (!c.runInSpace) throw new Error("runInSpace unavailable on client");

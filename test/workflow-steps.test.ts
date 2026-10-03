@@ -50,6 +50,34 @@ describe("runStep", () => {
     await runStep(step("agent", args), args, c);
     expect(c.runAgent).toHaveBeenCalledWith("sp", "hi", ["web_search"], "deepseek/deepseek-v4-pro");
   });
+  it("agent: falls back when the primary model returns empty", async () => {
+    const calls: Array<string | undefined> = [];
+    const runAgent = vi.fn(async (_s: string, _p: string, _t: string[] | undefined, m?: string) => {
+      calls.push(m);
+      return m === "backup" ? "second" : "";
+    });
+    const args = { space: "sp", prompt: "hi", model: "primary", fallback: "backup" };
+    const out = await runStep(step("agent", args), args, ctx({ runAgent }));
+    expect(out).toBe("second");
+    expect(calls).toEqual(["primary", "backup"]);
+  });
+  it("agent: falls back when the primary model throws", async () => {
+    const runAgent = vi.fn(async (_s: string, _p: string, _t: string[] | undefined, m?: string) => {
+      if (m === "primary") throw new Error("boom");
+      return "ok-backup";
+    });
+    const args = { space: "sp", prompt: "hi", model: "primary", fallback: "backup" };
+    expect(await runStep(step("agent", args), args, ctx({ runAgent }))).toBe("ok-backup");
+  });
+  it("agent: without fallback, an empty primary result is returned as-is", async () => {
+    const args = { space: "sp", prompt: "hi", model: "m" };
+    expect(await runStep(step("agent", args), args, ctx({ runAgent: vi.fn(async () => "") }))).toBe("");
+  });
+  it("agent: without fallback, a throwing primary propagates", async () => {
+    const runAgent = vi.fn(async () => { throw new Error("boom"); });
+    const args = { space: "sp", prompt: "hi" };
+    await expect(runStep(step("agent", args), args, ctx({ runAgent }))).rejects.toThrow(/boom/);
+  });
   it("http: fetches the url and returns the body", async () => {
     const out = await runStep(step("http", { url: "http://x" }), { url: "http://x" }, ctx());
     expect(out).toBe("body text");

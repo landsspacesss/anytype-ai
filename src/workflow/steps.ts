@@ -105,8 +105,26 @@ export async function runStep(step: Step, args: Record<string, unknown>, ctx: St
       const space = str(args.space) || ctx.spaceId;
       const tools = Array.isArray(args.tools) ? (args.tools as string[]) : undefined;
       const model = str(args.model) || undefined;
+      const fallback = str(args.fallback) || undefined;
       await requireApproval(ctx, step, "agent", prompt.slice(0, 200));
-      return clip(await ctx.runAgent(space, prompt, tools, model));
+      const attempt = (m?: string): Promise<string> => ctx.runAgent(space, prompt, tools, m);
+      let out: string;
+      try {
+        out = await attempt(model);
+      } catch (err) {
+        // A dead/misconfigured model often surfaces as a thrown error; try the
+        // fallback if one is set, otherwise propagate.
+        if (!fallback) throw err;
+        ctx.log?.(`step ${step.id}: model ${model ?? "(client default)"} failed (${err instanceof Error ? err.message : String(err)}); trying fallback ${fallback}`);
+        out = "";
+      }
+      // pi can also swallow a model error into an EMPTY reply, so treat empty
+      // primary output as a trigger for the fallback too.
+      if (out.trim() === "" && fallback) {
+        ctx.log?.(`step ${step.id}: model ${model ?? "(client default)"} returned empty; trying fallback ${fallback}`);
+        out = await attempt(fallback);
+      }
+      return clip(out);
     }
   }
 }
