@@ -78,6 +78,7 @@ export interface PiClientOptions {
   console?: {
     workspaceRoot: string;
     joinSpace?: (link: string) => Promise<{ ok: boolean; message: string }>;
+    setSpaceDirect?: (space: string, mode: "direct" | "group" | "auto") => Promise<{ ok: boolean; message: string }>;
   };
   /** Initial approval mode for this session. Default "auto". */
   approvalMode?: ApprovalMode;
@@ -104,6 +105,7 @@ export const CONSOLE_TOOLS: readonly string[] = [
   "anytype_download_file",
   "anytype_memories",
   "anytype_join_space",
+  "anytype_set_space_direct",
   "crop_image",
   "anytype_list_properties",
   "anytype_list_types",
@@ -514,6 +516,7 @@ export async function createPiClient(opts: PiClientOptions): Promise<ManagedClie
             console: {
               workspaceRoot: opts.agentWorkspaceRoot!,
               ...(opts.console?.joinSpace ? { joinSpace: opts.console.joinSpace } : {}),
+              ...(opts.console?.setSpaceDirect ? { setSpaceDirect: opts.console.setSpaceDirect } : {}),
               runInSpace,
             },
           }

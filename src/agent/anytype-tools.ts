@@ -414,6 +414,12 @@ export function createAnytypeTools(deps: {
      * `anytype_run_in_space` tool is registered only when this is present.
      */
     runInSpace?: (space: string, task: string) => Promise<string>;
+    /**
+     * Force every chat in a space to direct (answer without @) / group (require
+     * @) / auto (member-count rule). Injected by main; powers the console-only
+     * `anytype_set_space_direct` tool.
+     */
+    setSpaceDirect?: (space: string, mode: "direct" | "group" | "auto") => Promise<{ ok: boolean; message: string }>;
   };
 }): ToolDefinition[] {
   const {
@@ -1695,6 +1701,33 @@ export function createAnytypeTools(deps: {
     },
   });
 
+  const setSpaceDirectTool = defineTool({
+    name: "anytype_set_space_direct",
+    label: "Set a space's chat trigger mode",
+    description:
+      "Set how the assistant reacts to messages in a WHOLE space. mode \"direct\" = answer every message without an @-mention; \"group\" = require an @; \"auto\" = restore the automatic rule (spaces with ≤2 members answer directly, larger ones require @). Use when the user asks to make the assistant reply in a space without @, or to stop it. Applies to all of the space's chats and takes effect immediately (persisted across restarts).",
+    promptSnippet: "anytype_set_space_direct — force a whole space to answer without @ / require @ / auto",
+    promptGuidelines: GUIDELINES,
+    parameters: Type.Object({
+      space: Type.String({ description: "Target space id or name." }),
+      mode: Type.String({ description: 'One of: "direct" (no @ needed), "group" (require @), "auto" (member-count rule).' }),
+    }),
+    async execute(_id, params) {
+      if (!consoleDep?.setSpaceDirect) return textResult("anytype_set_space_direct unavailable in this session.");
+      const mode = params.mode;
+      if (mode !== "direct" && mode !== "group" && mode !== "auto") {
+        return textResult('anytype_set_space_direct: `mode` must be "direct", "group", or "auto".');
+      }
+      if (!params.space) return textResult("anytype_set_space_direct: `space` is required.");
+      try {
+        const r = await consoleDep.setSpaceDirect(params.space, mode);
+        return textResult(r.message);
+      } catch (err) {
+        return textResult(`anytype_set_space_direct failed: ${errMessage(err)}`);
+      }
+    },
+  });
+
   const tools = [
     listObjects,
     search,
@@ -1732,6 +1765,7 @@ export function createAnytypeTools(deps: {
   // Cross-space read tools and the memory aggregate are only for the global
   // console session.
   if (consoleDep) tools.push(listSpaces, memories, joinSpace);
+  if (consoleDep?.setSpaceDirect) tools.push(setSpaceDirectTool);
   if (consoleDep?.runInSpace) tools.push(runInSpaceTool);
 
   // Only the parent agent gets the subagent tool; child sessions omit it, so

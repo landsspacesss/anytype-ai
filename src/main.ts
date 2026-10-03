@@ -21,6 +21,7 @@ import { findWorkflow, listWorkflows, loadWorkflow } from "./workflow/registry.j
 import type { StepContext } from "./workflow/steps.js";
 import { ReplySink } from "./reply/sink.js";
 import { WatchStore } from "./watch/store.js";
+import { DirectOverrides } from "./router/direct-overrides.js";
 import { pollDueWatches } from "./watch/scheduler.js";
 import { cronMatches } from "./watch/cron.js";
 import { readConsole } from "./console/console-store.js";
@@ -93,6 +94,34 @@ async function main(): Promise<void> {
   const watchStore = new WatchStore(path.join(cfg.agentWorkspaceRoot, "watches.json"), cfg.watchDefaultCron);
   watchStore.load();
 
+  // Per-space override of the auto "direct" (private-chat) rule that decides
+  // whether a chat needs an @-mention. A console operator can force a space to
+  // answer-everything (direct) or require-@ (group); persisted across restarts.
+  const directOverrides = new DirectOverrides(path.join(cfg.agentWorkspaceRoot, "direct-overrides.json"));
+  directOverrides.load();
+
+  // Console-only: force every chat in a space to direct/group, or back to auto.
+  const setSpaceDirect = async (
+    space: string,
+    mode: "direct" | "group" | "auto",
+  ): Promise<{ ok: boolean; message: string }> => {
+    const spaces = await api.listSpaces();
+    const target = (space ?? "").trim();
+    const spaceId =
+      spaces.some((s) => s.id === target) ? target :
+      spaces.find((s) => (s.name ?? "").toLowerCase() === target.toLowerCase())?.id;
+    if (!spaceId) return { ok: false, message: `未知空间：${space}` };
+    const name = spaces.find((s) => s.id === spaceId)?.name || spaceId;
+    if (mode === "auto") {
+      directOverrides.clear(spaceId);
+    } else {
+      directOverrides.set(spaceId, mode === "direct");
+    }
+    const chats = await api.listChats(spaceId).catch(() => []);
+    const label = mode === "direct" ? "直接响应（不用 @）" : mode === "group" ? "需要 @ 才响应" : "恢复自动（按成员数）";
+    return { ok: true, message: `空间「${name}」的 ${chats.length} 个聊天已设为：${label}。立即生效。` };
+  };
+
   // Each chat's persisted JSONL lives here; /new deletes it so history is gone.
   const chatSessionDirFor = (chatId: string): string | undefined =>
     cfg.sessionPersist ? path.join(cfg.agentWorkspaceRoot, "sessions", sanitize(chatId)) : undefined;
@@ -146,7 +175,7 @@ async function main(): Promise<void> {
         agentWorkspaceRoot: cfg.agentWorkspaceRoot,
         // The console session gets the join implementation (drives
         // `anytype_join_space`); passed through only when it is a console.
-        ...(consoleSession ? { console: { workspaceRoot: cfg.agentWorkspaceRoot, joinSpace } } : {}),
+        ...(consoleSession ? { console: { workspaceRoot: cfg.agentWorkspaceRoot, joinSpace, setSpaceDirect } } : {}),
         // A brand-new client adopts the chat's current interrupt policy, so a
         // policy set via /interrupt survives an idle-reap/rebuild.
         interruptPolicy: sessions.getInterruptPolicy(chatId),
@@ -292,6 +321,11 @@ async function main(): Promise<void> {
 
   const onEvent = (e: NormalizedEvent): void => {
     void (async () => {
+      // A console-set per-space override wins over the auto member-count rule,
+      // so toggling it affects already-subscribed chats immediately.
+      const ov = directOverrides.get(e.spaceId);
+      if (ov !== undefined) e.isDirect = ov;
+
       if (e.objectId) e.contextNote = await discussionContext(e);
 
       // Slash commands are handled by the bridge (never forwarded to the
