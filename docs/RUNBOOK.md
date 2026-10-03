@@ -66,7 +66,7 @@ aibot up -d ai-bot            # 起
 
 它做两件事：`docker build -t anytype-ai-bot:latest -t anytype-ai-bot:<commit>`（镜像打上 git 短 sha，便于查线上跑的是哪次提交）+ 用合并 compose `up -d --force-recreate --no-deps ai-bot`。路径不同可 `BOT_REPO=… ANYTYPE_DIR=… ./deploy.sh`。
 
-**改用 GHCR 镜像（不本地构建）**：镜像由 GitHub Actions 在 push main / 打 `v*` tag 时自动推到 `ghcr.io/landsspacesss/anytype-ai`（仓库公开 → **匿名可拉**，不用登录）。服务器上：
+**改用 GHCR 镜像（不本地构建）**：镜像由 GitHub Actions **只在打 `v*` tag 时**构建并推到 `ghcr.io/landsspacesss/anytype-ai`（**不再随每次 push main 构建**；仓库公开 → **匿名可拉**，不用登录）。发版：`git tag v1.2.3 && git push origin v1.2.3`。服务器上：
 
 ```bash
 /home/landspace/anytype-ai-bot/deploy.sh --pull          # 拉 :latest 并重建
