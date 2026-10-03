@@ -255,6 +255,15 @@ async function main(): Promise<void> {
       if (!c.runInSpace) throw new Error("runInSpace unavailable on client");
       return c.runInSpace(space, prompt);
     },
+    approve: async ({ tool, detail }) => {
+      const spaceId = chatTargets.get(chatId)?.spaceId ?? "";
+      // The console is read-only until unlocked via /yolo auto (spec §7).
+      if (isConsoleSpace(spaceId)) return sessions.getConsoleUnlocked(chatId);
+      const mode = sessions.getApprovalMode(chatId);
+      if (mode === "auto") return true;
+      if (mode === "readonly") return false;
+      return gateFor({ spaceId, chatId }).request(tool, detail); // ask → prompt in the chat
+    },
   });
   function formatRunEvent(e: RunEvent): string {
     const head = `▶ ${e.runId} ${e.name}`;
@@ -545,6 +554,7 @@ async function main(): Promise<void> {
       if (wfFiredMinute.get(entry.name) === key) continue;
       wfFiredMinute.set(entry.name, key);
       const notify = def.on?.notify ?? "";
+      if (!notify) console.warn(`workflow cron '${entry.name}' has no on.notify — result will not be posted`);
       void (async () => {
         try {
           const state = await runWorkflow(def, {
