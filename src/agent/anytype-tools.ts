@@ -1283,7 +1283,7 @@ export function createAnytypeTools(deps: {
       filters: Type.Optional(
         Type.Unknown({
           description:
-            "For add: a FilterNode[] (or group) — e.g. [{\"condition\":\"in\",\"property\":\"tag\",\"value\":[\"重要\"]}] — to watch the set of objects matching a field filter.",
+            "For add: a FilterNode[] (or {\"operator\":\"and\"|\"or\",\"filters\":[...]} group) — watch the set of objects matching it. Each leaf is {property, condition, value?|date_preset?}. condition ∈ equal, not_equal, greater, less, greater_or_equal, less_or_equal, contains, not_contains, in, not_in, empty, not_empty, all_in, exists. Comparisons (greater/less/…) work on NUMBER and DATE properties; select/multi_select use in/equal with OPTION NAMES (a query never creates options — check with the properties endpoint); dates also take date_preset ∈ today, yesterday, tomorrow, current_week, last_week, next_week, current_month, last_month, next_month, current_year, last_year, next_year, number_of_days_ago, number_of_days_now. Top-level nodes combine with AND. Examples: [{property:\"due_date\",condition:\"less\",date_preset:\"today\"}]; [{property:\"score\",condition:\"greater\",value:90}]; {operator:\"or\",filters:[{property:\"done\",condition:\"equal\",value:false},{property:\"due_date\",condition:\"empty\"}]}. (Arbitrary arithmetic like a+b>c is NOT supported by the API.)",
         }),
       ),
       label: Type.Optional(Type.String({ description: "Optional human label for the subscription." })),
