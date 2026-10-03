@@ -44,12 +44,15 @@ describe("Router", () => {
     expect(run).toHaveBeenCalledWith("s", "c", "（你正在页面「X」的讨论区）\n\n讲了什么");
   });
 
-  it("prefixes the sender name in a multi-person space", async () => {
+  it("labels the sender in a multi-person space, clarifying it's a person not a space", async () => {
     const run = vi.fn(async () => "ok");
     const send = vi.fn(async () => {});
     const r = new Router({ botName: "ai", run, send });
     await r.handle(ev({ mentionsBot: true, text: "@ai 帮忙", senderName: "landspace" }));
-    expect(run).toHaveBeenCalledWith("s", "c", "[landspace] 帮忙");
+    const prompt = run.mock.calls[0][2] as string;
+    expect(prompt).toContain("landspace");
+    expect(prompt).toContain("帮忙");
+    expect(prompt).toContain("不是空间名");
   });
 
   it("does not prefix a sender name when absent (private chat)", async () => {
