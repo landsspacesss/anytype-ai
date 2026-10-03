@@ -18,6 +18,11 @@ export interface NormalizedEvent {
   objectId?: string;
   /** Extra context prepended to the agent prompt (e.g. "you are in page X's discussion"). */
   contextNote?: string;
+  /**
+   * Display name of the sender, set only for multi-person spaces so the agent
+   * can tell speakers apart. Prepended to the message as `[name] …`.
+   */
+  senderName?: string;
   /** Files/images attached to the message (their object ids + kind). */
   attachments?: Array<{ id: string; type: string }>;
 }

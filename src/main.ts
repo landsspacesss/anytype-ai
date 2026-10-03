@@ -100,6 +100,10 @@ async function main(): Promise<void> {
   const directOverrides = new DirectOverrides(path.join(cfg.agentWorkspaceRoot, "direct-overrides.json"));
   directOverrides.load();
 
+  // Per-space participant id → display name (filled during discovery); used to
+  // label the speaker in multi-person spaces.
+  const memberNames = new Map<string, Map<string, string>>();
+
   // Console-only: force every chat in a space to direct/group, or back to auto.
   const setSpaceDirect = async (
     space: string,
@@ -326,6 +330,14 @@ async function main(): Promise<void> {
       const ov = directOverrides.get(e.spaceId);
       if (ov !== undefined) e.isDirect = ov;
 
+      // Label the speaker only in a genuinely multi-person space (>2 members,
+      // i.e. the bot plus ≥2 humans) so the agent can tell them apart.
+      const names = memberNames.get(e.spaceId);
+      if (names && names.size > 2) {
+        const sn = names.get(e.senderId);
+        if (sn) e.senderName = sn;
+      }
+
       if (e.objectId) e.contextNote = await discussionContext(e);
 
       // Slash commands are handled by the bridge (never forwarded to the
@@ -444,6 +456,12 @@ async function main(): Promise<void> {
         }
 
         const isDirect = members.length <= 2;
+
+        // Remember per-space participant names so a multi-person (group) space
+        // can label WHO is speaking when the message reaches the agent.
+        if (members.length > 0) {
+          memberNames.set(space.id, new Map(members.map((m) => [m.id, m.name ?? m.identity])));
+        }
 
         const chats = await api.listChats(space.id).catch((err) => {
           console.warn(`listChats failed for space ${space.id}: ${String(err)}`);

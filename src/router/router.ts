@@ -39,7 +39,9 @@ export class Router {
       );
     }
     if (event.contextNote) parts.push(event.contextNote);
-    parts.push(stripped);
+    // In a multi-person space, label who is speaking so the agent can tell
+    // speakers apart (private chats have only one possible speaker → no label).
+    parts.push(event.senderName ? `[${event.senderName}] ${stripped}` : stripped);
     const prompt = parts.join("\n\n");
 
     // Live status: a self-updating placeholder that shows the current tool call
