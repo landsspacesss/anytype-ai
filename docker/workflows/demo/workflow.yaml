@@ -9,4 +9,4 @@ steps:
     with: { url: "https://example.com" }
   - id: report
     uses: shell
-    with: { run: "echo 'fetched {{ steps.fetch.output }}' | head -c 120" }
+    with: { run: "echo got={{ steps.hello.output }}" }
